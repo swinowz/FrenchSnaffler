@@ -31,6 +31,10 @@ This version includes several critical improvements over the original Snaffler:
 - **User-specified paths**: Use `-p <path>` to load rules from any directory
 - **Better debugging**: Detailed console output showing which rules are loaded and from where
 
+### 🇫🇷 **French Language Support**
+- **Multi-language detection**: Now includes French keyword patterns for credential detection
+- **Extended coverage**: Detects "mot de passe", "identifiant", "utilisateur", and other French terms
+
 ### 🐛 **Stability Improvements**
 - Enhanced error handling in file and tree scanning operations
 - Better task scheduler queue management

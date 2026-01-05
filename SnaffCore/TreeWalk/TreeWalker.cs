@@ -27,17 +27,22 @@ namespace SnaffCore.TreeWalk
         {
              // Walks a tree checking files and generating results as it goes.
              
+             Console.WriteLine($"[DEBUG-TREE] WalkTree called for: {currentDir}");
+             
              if (!Directory.Exists(currentDir))
              {
+                 Console.WriteLine($"[DEBUG-TREE] Directory does not exist: {currentDir}");
                  return;
              }
 
             try
             {
                 string[] files = Directory.GetFiles(currentDir);
+                Console.WriteLine($"[DEBUG-TREE] Found {files.Length} files in {currentDir}");
                 // check if we actually like the files
                 foreach (string file in files)
                 {
+                    Console.WriteLine($"[DEBUG-TREE] Queueing file scan: {Path.GetFileName(file)}");
                     FileTaskScheduler.New(() =>
                     {
                         try

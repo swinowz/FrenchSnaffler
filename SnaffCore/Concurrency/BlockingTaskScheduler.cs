@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.Versioning;
 
 namespace SnaffCore.Concurrency
 {
@@ -47,6 +48,8 @@ namespace SnaffCore.Concurrency
             // set up to not add the task as default
             bool proceed = false;
 
+            Console.WriteLine($"[DEBUG-SCHED] New task requested, current queue: {Scheduler?.GetTaskCounters().CurrentTasksQueued ?? -1}");
+
             while (proceed == false) // loop the calling thread until we are allowed to do the thing
             {
                 lock (syncLock) // take out the lock
@@ -57,18 +60,24 @@ namespace SnaffCore.Concurrency
                     if (_maxBacklog != 0)
                     {
                         if (Scheduler.GetTaskCounters().CurrentTasksQueued >= _maxBacklog)
+                        {
+                            Console.WriteLine($"[DEBUG-SCHED] Backlog full, waiting... ({Scheduler.GetTaskCounters().CurrentTasksQueued}/{_maxBacklog})");
                             continue;
+                        }
                     }
 
                     // okay, let's add the thing
                     proceed = true;
+                    Console.WriteLine($"[DEBUG-SCHED] Task added to queue, starting...");
 
                     WindowsIdentity impersonatedUser = WindowsIdentity.GetCurrent();
                     _taskFactory.StartNew(() => {
-                        using (WindowsImpersonationContext ctx = impersonatedUser.Impersonate())
+                        Console.WriteLine($"[DEBUG-SCHED] Task thread started");
+                        WindowsIdentity.RunImpersonated(impersonatedUser.AccessToken, () =>
                         {
                             action();
-                        }
+                        });
+                        Console.WriteLine($"[DEBUG-SCHED] Task thread completed");
                     }, _cancellationSource.Token);
                 }
             }
@@ -98,6 +107,35 @@ namespace SnaffCore.Concurrency
         }
         public void RecalculateCounters()
         {
+            // Take snapshot under lock to ensure atomic read
+            int tasksCount, delegatesCount, totalQueued;
+            
+            lock (_tasks)
+            {
+                tasksCount = _tasks.Count;
+                delegatesCount = _delegatesQueuedOrRunning;
+                totalQueued = (int)_taskCounters.TotalTasksQueued;
+            }
+            
+            // Now calculate outside the lock
+            lock (_taskCounters)
+            {
+                this._taskCounters.CurrentTasksQueued = tasksCount;
+                this._taskCounters.CurrentTasksRunning = delegatesCount;
+                this._taskCounters.CurrentTasksRemaining = tasksCount + delegatesCount;
+                this._taskCounters.CompletedTasks = totalQueued - this._taskCounters.CurrentTasksRemaining;
+                this._taskCounters.MaxParallelism = this._maxDegreeOfParallelism;
+                
+                if (this._taskCounters.CurrentTasksRemaining > 0)
+                {
+                    Console.WriteLine($"[DEBUG-COUNTERS] _tasks.Count={tasksCount}, _delegatesQueuedOrRunning={delegatesCount}, MaxPara={_maxDegreeOfParallelism}");
+                }
+            }
+        }
+
+        // Helper for when we already hold the _tasks lock
+        private void RecalculateCountersUnsafe()
+        {
             lock (_taskCounters)
             {
                 this._taskCounters.CurrentTasksQueued = _tasks.Count;
@@ -117,8 +155,9 @@ namespace SnaffCore.Concurrency
         // The maximum concurrency level allowed by this scheduler. 
         public int _maxDegreeOfParallelism;
 
-        // Indicates whether the scheduler is currently processing work items. 
-        private int _delegatesQueuedOrRunning;
+        // Indicates whether the scheduler is currently processing work items.
+        // VOLATILE: Ensures memory visibility across threads
+        private volatile int _delegatesQueuedOrRunning;
 
         // Creates a new instance with the specified degree of parallelism. 
         public LimitedConcurrencyLevelTaskScheduler(int maxDegreeOfParallelism)
@@ -132,17 +171,22 @@ namespace SnaffCore.Concurrency
         protected sealed override void QueueTask(Task task)
         {
             // Add the task to the list of tasks to be processed.  If there aren't enough 
-            // delegates currently queued or running to process tasks, schedule another. 
+            // delegates currently queued or running to process tasks, schedule another.
+            // ALL access to _delegatesQueuedOrRunning happens under this lock
             lock (_tasks)
             {
                 _tasks.AddLast(task);
                 ++_taskCounters.TotalTasksQueued;
+                Console.WriteLine($"[DEBUG-QUEUE] Task queued, _delegatesQueuedOrRunning={_delegatesQueuedOrRunning}, _maxDegreeOfParallelism={_maxDegreeOfParallelism}");
+                
                 if (_delegatesQueuedOrRunning < _maxDegreeOfParallelism)
                 {
                     ++_delegatesQueuedOrRunning;
+                    Console.WriteLine($"[DEBUG-QUEUE] Starting new delegate, _delegatesQueuedOrRunning now={_delegatesQueuedOrRunning}");
                     NotifyThreadPoolOfPendingWork();
                 }
-                RecalculateCounters();
+                
+                RecalculateCountersUnsafe();
             }
         }
 
@@ -167,13 +211,24 @@ namespace SnaffCore.Concurrency
                             if (_tasks.Count == 0)
                             {
                                 --_delegatesQueuedOrRunning;
+                                Console.WriteLine($"[DEBUG-WORKER] Worker thread exiting, _delegatesQueuedOrRunning now={_delegatesQueuedOrRunning}");
+                                
+                                // CRITICAL: Double-check pattern to prevent orphaned tasks
+                                // Another thread might have queued work while we were checking
+                                if (_tasks.Count > 0 && _delegatesQueuedOrRunning < _maxDegreeOfParallelism)
+                                {
+                                    ++_delegatesQueuedOrRunning;
+                                    Console.WriteLine($"[DEBUG-WORKER] Work added during exit check, staying alive. _delegatesQueuedOrRunning now={_delegatesQueuedOrRunning}");
+                                    continue;  // Keep processing
+                                }
+                                
                                 break;
                             }
 
                             // Get the next item from the queue
                             item = _tasks.First.Value;
                             _tasks.RemoveFirst();
-                            RecalculateCounters();
+                            RecalculateCountersUnsafe();
                         }
 
                         // Execute the task we pulled out of the queue

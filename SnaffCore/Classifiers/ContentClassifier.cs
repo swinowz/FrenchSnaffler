@@ -56,7 +56,7 @@ namespace SnaffCore.Classifiers
                                     ".doc",".docx",".xls",".xlsx",".eml",".msg",".pdf",".ppt",".pptx",".rtf",".docm",".xlsm",".pptm",".dot",".dotx",".dotm",".xlt",".xlsm",".xltm"
                                 };
 
-                                if (parsedExtensions.Contains(fileInfo.Extension))
+                                if (parsedExtensions.Contains(fileInfo.Extension.ToLower()))
                                 {
                                     fileString = ParseFileToString(fileInfo);
                                 }
@@ -71,6 +71,11 @@ namespace SnaffCore.Classifiers
                                 TextResult textResult = textClassifier.TextMatch(fileString);
                                 if (textResult != null)
                                 {
+                                    // Store full content for Excel extraction (capped at 512KB)
+                                    textResult.FullContent = fileString.Length > 512 * 1024 
+                                        ? fileString.Substring(0, 512 * 1024) 
+                                        : fileString;
+                                    
                                     fileResult = new FileResult(fileInfo)
                                     {
                                         MatchedRule = ClassifierRule,
@@ -178,11 +183,38 @@ namespace SnaffCore.Classifiers
 #if ULTRASNAFFLER
         public string ParseFileToString(FileInfo fileInfo)
         {
-            ParserContext context = new ParserContext(fileInfo.FullName);
-            ITextParser parser = ParserFactory.CreateText(context);
+            try
+            {
+                // Timeout after 30 seconds to prevent hanging on problematic files
+                var task = System.Threading.Tasks.Task.Run(() =>
+                {
+                    try
+                    {
+                        ParserContext context = new ParserContext(fileInfo.FullName);
+                        ITextParser parser = ParserFactory.CreateText(context);
+                        return parser.Parse() ?? "";
+                    }
+                    catch
+                    {
+                        return "";
+                    }
+                });
 
-                string doc = parser.Parse();
-            return doc;
+                if (task.Wait(TimeSpan.FromSeconds(30)))
+                {
+                    return task.Result ?? "";
+                }
+                else
+                {
+                    Console.WriteLine($"[DEBUG-SCAN] TIMEOUT parsing: {fileInfo.Name}");
+                    return "";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DEBUG-SCAN] Error parsing {fileInfo.Name}: {ex.Message}");
+                return "";
+            }
         }
 #endif
 

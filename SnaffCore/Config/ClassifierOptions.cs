@@ -100,6 +100,20 @@ namespace SnaffCore.Config
             PostMatchClassifiers = (from classifier in ClassifierRules
                 where classifier.EnumerationScope == EnumerationScope.PostMatch
                 select classifier).ToList();
+            
+            // Diagnostic logging to help troubleshoot rule loading issues
+            Console.WriteLine($"[Info] Loaded {ClassifierRules.Count} total rules after interest filtering");
+            Console.WriteLine($"[Info] Rule breakdown: {FileClassifiers.Count} file, {ContentsClassifiers.Count} content, {DirClassifiers.Count} directory, {ShareClassifiers.Count} share, {PostMatchClassifiers.Count} postmatch");
+            
+            // Warn about empty critical collections
+            if (FileClassifiers.Count == 0)
+            {
+                Console.WriteLine("[WARNING] No file classifier rules loaded! Files will not be scanned.");
+            }
+            if (ContentsClassifiers.Count == 0)
+            {
+                Console.WriteLine("[WARNING] No content classifier rules loaded! File contents will not be scanned.");
+            }
         }
 
         private bool IsInterest(ClassifierRule classifier)
@@ -110,6 +124,14 @@ namespace SnaffCore.Config
              */
             try
             {
+                // Infrastructure rules (Relay, Discard) should always be included
+                // regardless of interest level, as they're routing mechanisms not findings
+                if (classifier.MatchAction == MatchAction.Relay || 
+                    classifier.MatchAction == MatchAction.Discard ||
+                    classifier.MatchAction == MatchAction.EnterArchive)
+                {
+                    return true;
+                }
 
                 if (classifier.RelayTargets != null)
                 {

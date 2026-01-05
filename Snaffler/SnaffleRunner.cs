@@ -5,6 +5,7 @@ using NLog.Targets;
 using SnaffCore;
 using SnaffCore.Concurrency;
 using SnaffCore.Config;
+using SnaffCore.ExcelExport;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -21,6 +22,7 @@ namespace Snaffler
         private BlockingMq Mq { get; set; }
         private LogLevel LogLevel { get; set; }
         private Options Options { get; set; }
+        private ExcelReportGenerator _excelReportGenerator;
 
         private string _hostString;
 
@@ -193,6 +195,23 @@ namespace Snaffler
 
                 //-------------------------------------------
 
+                // Initialize Excel report generator if -t auto is used
+                if (Options.LogType == LogType.Auto)
+                {
+                    string excelOutputPath = Options.LogFilePath;
+                    if (string.IsNullOrWhiteSpace(excelOutputPath))
+                    {
+                        excelOutputPath = Path.Combine(Environment.CurrentDirectory, 
+                            $"Snaffler-Report-{DateTime.Now:yyyy-MM-dd-HHmm}.xlsx");
+                    }
+                    else if (!excelOutputPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+                    {
+                        excelOutputPath = Path.ChangeExtension(excelOutputPath, ".xlsx");
+                    }
+                    _excelReportGenerator = new ExcelReportGenerator(excelOutputPath, Mq);
+                    Mq.Info($"Excel report will be generated at: {excelOutputPath}");
+                }
+
                 if (Options.Snaffle && (Options.SnafflePath.Length > 4))
                 {
                     Directory.CreateDirectory(Options.SnafflePath);
@@ -205,10 +224,10 @@ namespace Snaffler
 
                 WindowsIdentity impersonatedUser = WindowsIdentity.GetCurrent();
                 Task thing = Task.Factory.StartNew(() => {
-                    using (WindowsImpersonationContext ctx = impersonatedUser.Impersonate())
+                    WindowsIdentity.RunImpersonated(impersonatedUser.AccessToken, () =>
                     {
                         controller.Execute();
-                    }
+                    });
                 }, token);
                 bool exit = false;
 
@@ -254,6 +273,31 @@ namespace Snaffler
                 else if (Options.LogType == LogType.JSON)
                 {
                     ProcessMessageJSON(message);
+                }
+                else if (Options.LogType == LogType.Auto)
+                {
+                    // Process for Excel output - also log to console
+                    ProcessMessage(message);
+                    
+                    // Add file results to Excel report
+                    if (message.Type == SnafflerMessageType.FileResult && _excelReportGenerator != null)
+                    {
+                        _excelReportGenerator.AddFinding(message.FileResult);
+                    }
+                    
+                    // Generate Excel report on finish
+                    if (message.Type == SnafflerMessageType.Finish && _excelReportGenerator != null)
+                    {
+                        try
+                        {
+                            _excelReportGenerator.Generate();
+                            Mq.Info("Excel report generated successfully.");
+                        }
+                        catch (Exception ex)
+                        {
+                            Mq.Error($"Failed to generate Excel report: {ex.Message}");
+                        }
+                    }
                 }
 
                 // catch terminating messages and bail out of the master 'while' loop

@@ -7,7 +7,8 @@ namespace SnaffCore.Config
     public enum LogType
     {
         Plain = 0,
-        JSON = 1
+        JSON = 1,
+        Auto = 2  // Excel report generation
     }
 
     public partial class Options

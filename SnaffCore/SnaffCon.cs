@@ -149,7 +149,36 @@ namespace SnaffCore
                 Mq.Error("OctoParrot says: AWK! I SHOULDN'T BE!");
             }
 
-            waitHandle.WaitOne();
+            // Poll for completion every second instead of waiting for the timer
+            Console.WriteLine("[DEBUG-MAIN] Entering completion polling loop...");
+            while (true)
+            {
+                ShareTaskScheduler.Scheduler.RecalculateCounters();
+                TreeTaskScheduler.Scheduler.RecalculateCounters();
+                FileTaskScheduler.Scheduler.RecalculateCounters();
+                
+                var shareCounters = ShareTaskScheduler.Scheduler.GetTaskCounters();
+                var treeCounters = TreeTaskScheduler.Scheduler.GetTaskCounters();
+                var fileCounters = FileTaskScheduler.Scheduler.GetTaskCounters();
+                
+                bool shareDone = ShareTaskScheduler.Done();
+                bool treeDone = TreeTaskScheduler.Done();
+                bool fileDone = FileTaskScheduler.Done();
+                
+                Console.WriteLine($"[DEBUG-MAIN] ShareScheduler - Queued:{shareCounters.CurrentTasksQueued} Running:{shareCounters.CurrentTasksRunning} Done:{shareDone}");
+                Console.WriteLine($"[DEBUG-MAIN] TreeScheduler  - Queued:{treeCounters.CurrentTasksQueued} Running:{treeCounters.CurrentTasksRunning} Done:{treeDone}");
+                Console.WriteLine($"[DEBUG-MAIN] FileScheduler  - Queued:{fileCounters.CurrentTasksQueued} Running:{fileCounters.CurrentTasksRunning} Done:{fileDone}");
+                
+                if (fileDone && shareDone && treeDone)
+                {
+                    Console.WriteLine("[DEBUG-MAIN] All tasks completed, exiting poll loop");
+                    Mq.Info("All scanning tasks completed.");
+                    Mq.Info($"Scanned {fileCounters.CompletedTasks} files in total.");
+                    break;
+                }
+                
+                Thread.Sleep(1000); // Check every second
+            }
 
             StatusUpdate();
             DateTime finished = DateTime.Now;
@@ -398,7 +427,9 @@ namespace SnaffCore
                 {
                     try
                     {
+                        Mq.Info("TreeWalker task STARTED for " + pathTarget);
                         TreeWalker.WalkTree(pathTarget);
+                        Mq.Info("TreeWalker task COMPLETED for " + pathTarget);
                     }
                     catch (Exception e)
                     {
@@ -409,6 +440,8 @@ namespace SnaffCore
             }
 
             Mq.Info("Created all TreeWalker tasks.");
+            TreeTaskScheduler.Scheduler.RecalculateCounters();
+            Mq.Info($"TreeTaskScheduler queue count: {TreeTaskScheduler.Scheduler.GetTaskCounters().CurrentTasksQueued}");
         }
 
         // This method is called every minute

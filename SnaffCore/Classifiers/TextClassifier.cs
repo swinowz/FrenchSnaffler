@@ -25,10 +25,18 @@ namespace SnaffCore.Classifiers
                 {
                     if (regex.IsMatch(input))
                     {
+                        // Cap FullContent at 512KB for large files
+                        string fullContent = input;
+                        if (fullContent != null && fullContent.Length > 512 * 1024)
+                        {
+                            fullContent = fullContent.Substring(0, 512 * 1024);
+                        }
+                        
                         return new TextResult()
                         {
                             MatchedStrings = new List<string>() { regex.ToString() },
-                            MatchContext = GetContext(input, regex)
+                            MatchContext = GetContext(input, regex),
+                            FullContent = fullContent
                         };
                     }
                 }
@@ -121,5 +129,9 @@ namespace SnaffCore.Classifiers
     {
         public List<string> MatchedStrings { get; set; }
         public string MatchContext { get; set; }
+        /// <summary>
+        /// Full content of the file for credential extraction (capped at 512KB)
+        /// </summary>
+        public string FullContent { get; set; }
     }
 }

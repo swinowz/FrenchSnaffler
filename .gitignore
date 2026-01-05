@@ -356,3 +356,6 @@ MigrationBackup/
 .ionide/
 
 **/.DS_Store
+
+# Custom build output folder
+Compiled-Ultra/

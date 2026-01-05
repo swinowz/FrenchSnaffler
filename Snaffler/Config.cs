@@ -173,6 +173,11 @@ namespace Snaffler
                     {
                         parsedConfig.LogType = LogType.JSON;
                     }
+                    else if (logType.Value.ToLower() == "auto")
+                    {
+                        parsedConfig.LogType = LogType.Auto;
+                        Mq.Info("Excel report generation enabled with -t auto");
+                    }
                     else
                     {
                         Mq.Info("Invalid type argument passed (" + logType.Value + ") defaulting to plaintext");
@@ -412,34 +417,42 @@ namespace Snaffler
 
                 if (parsedConfig.ClassifierRules.Count <= 0)
                 {
-                    if (String.IsNullOrWhiteSpace(parsedConfig.RuleDir))
-                        {
-                        // get all the embedded toml file resources
-                        string[] resourceNames = Assembly.GetExecutingAssembly().GetManifestResourceNames();
-                        StringBuilder sb = new StringBuilder();
-
-                        foreach (string resourceName in resourceNames)
-                        {
-                            if (!resourceName.EndsWith(".toml"))
-                            {
-                                // skip this one as it's just metadata
-                                continue;
-                            }
-                            string ruleFile = ReadResource(resourceName);
-                            sb.AppendLine(ruleFile);
-                        }
-
-                        string bulktoml = sb.ToString();
-
-                        // deserialise the toml to an actual ruleset
-                        RuleSet ruleSet = Toml.ReadString<RuleSet>(bulktoml, settings);
-
-                        // stick the rules in our config!
-                        parsedConfig.ClassifierRules = ruleSet.ClassifierRules;
-                    }
-                    else
+                    // First, check if SnaffRules directory exists in executable location
+                    string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                    string rulesDir = Path.Combine(exeDir, "SnaffRules", "DefaultRules");
+                    
+                    if (Directory.Exists(rulesDir) && String.IsNullOrWhiteSpace(parsedConfig.RuleDir))
                     {
+                        Console.WriteLine($"[Info] Loading rules from: {rulesDir}");
+                        string[] tomlfiles = Directory.GetFiles(rulesDir, "*.toml", SearchOption.AllDirectories);
+                        Console.WriteLine($"[Info] Found {tomlfiles.Length} .toml files in rules directory");
+                        
+                        if (tomlfiles.Length == 0)
+                        {
+                            Console.WriteLine("[WARNING] Rules directory exists but contains no .toml files!");
+                        }
+                        else
+                        {
+                            StringBuilder sb = new StringBuilder();
+                            foreach (string tomlfile in tomlfiles)
+                            {
+                                string tomlstring = File.ReadAllText(tomlfile);
+                                sb.AppendLine(tomlstring);
+                            }
+                            string bulktoml = sb.ToString();
+                            // deserialise the toml to an actual ruleset
+                            RuleSet ruleSet = Toml.ReadString<RuleSet>(bulktoml, settings);
+                            parsedConfig.ClassifierRules = ruleSet.ClassifierRules;
+                            Console.WriteLine($"[Info] Loaded {parsedConfig.ClassifierRules.Count} rules from external directory");
+                        }
+                    }
+                    else if (!String.IsNullOrWhiteSpace(parsedConfig.RuleDir))
+                    {
+                        // User specified custom rules directory with -p flag
+                        Console.WriteLine($"[Info] Loading rules from user-specified directory: {parsedConfig.RuleDir}");
                         string[] tomlfiles = Directory.GetFiles(parsedConfig.RuleDir, "*.toml", SearchOption.AllDirectories);
+                        Console.WriteLine($"[Info] Found {tomlfiles.Length} .toml files");
+                        
                         StringBuilder sb = new StringBuilder();
                         foreach (string tomlfile in tomlfiles)
                         {
@@ -449,9 +462,49 @@ namespace Snaffler
                         string bulktoml = sb.ToString();
                         // deserialise the toml to an actual ruleset
                         RuleSet ruleSet = Toml.ReadString<RuleSet>(bulktoml, settings);
+                        parsedConfig.ClassifierRules = ruleSet.ClassifierRules;
+                        Console.WriteLine($"[Info] Loaded {parsedConfig.ClassifierRules.Count} rules from custom directory");
+                    }
+                    else
+                    {
+                        // Fall back to embedded resources
+                        Console.WriteLine("[Info] Loading embedded rules from assembly resources");
+                        string[] resourceNames = Assembly.GetExecutingAssembly().GetManifestResourceNames();
+                        Console.WriteLine($"[Info] Found {resourceNames.Length} embedded resources");
+                        
+                        StringBuilder sb = new StringBuilder();
+                        int tomlCount = 0;
+
+                        foreach (string resourceName in resourceNames)
+                        {
+                            if (!resourceName.EndsWith(".toml"))
+                            {
+                                // skip this one as it's just metadata
+                                continue;
+                            }
+                            tomlCount++;
+                            string ruleFile = ReadResource(resourceName);
+                            sb.AppendLine(ruleFile);
+                        }
+
+                        Console.WriteLine($"[Info] Found {tomlCount} embedded .toml resources");
+                        
+                        if (tomlCount == 0)
+                        {
+                            Console.WriteLine("[ERROR] No embedded resources found and no external rules directory!");
+                            Console.WriteLine($"[ERROR] Expected rules at: {rulesDir}");
+                            Console.WriteLine("[ERROR] Either rebuild with embedded resources or place rules in SnaffRules/DefaultRules/");
+                            throw new Exception("No classification rules could be loaded!");
+                        }
+
+                        string bulktoml = sb.ToString();
+
+                        // deserialise the toml to an actual ruleset
+                        RuleSet ruleSet = Toml.ReadString<RuleSet>(bulktoml, settings);
 
                         // stick the rules in our config!
                         parsedConfig.ClassifierRules = ruleSet.ClassifierRules;
+                        Console.WriteLine($"[Info] Loaded {parsedConfig.ClassifierRules.Count} rules from embedded resources");
                     }
                 }
 

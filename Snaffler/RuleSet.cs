@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using SnaffCore.Classifiers;
 
-namespace Snaffler
+namespace ShareAuditor
 {
     public class RuleSet
     {

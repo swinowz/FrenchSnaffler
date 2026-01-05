@@ -1,9 +1,9 @@
 ﻿using System;
 using System.IO;
 
-namespace Snaffler
+namespace ShareAuditor
 {
-    public static class Snaffler
+    public static class ShareAuditor
     {
         public static void Main(string[] args)
         {
@@ -13,9 +13,9 @@ namespace Snaffler
             streamWriter.AutoFlush = true;
             Console.SetOut(streamWriter);
             
-            SnaffleRunner runner = new SnaffleRunner();
+            AuditorRunner runner = new AuditorRunner();
             runner.Run(args);
-            Console.WriteLine("I snaffled 'til the snafflin was done.");
+            Console.WriteLine("ShareAuditor scan complete.");
             
             streamWriter.Close();
             fileStream.Close();

@@ -14,9 +14,9 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Snaffler
+namespace ShareAuditor
 {
-    public class SnaffleRunner
+    public class AuditorRunner
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private BlockingMq Mq { get; set; }
@@ -573,13 +573,13 @@ namespace Snaffler
         {
             string[] barfLines = new[]
             {
-                @" .::::::.:::.    :::.  :::.    .-:::::'.-:::::':::    .,:::::: :::::::..   ",
-                @";;;`    ``;;;;,  `;;;  ;;`;;   ;;;'''' ;;;'''' ;;;    ;;;;'''' ;;;;``;;;;  ",
-                @"'[==/[[[[, [[[[[. '[[ ,[[ '[[, [[[,,== [[[,,== [[[     [[cccc   [[[,/[[['  ",
-                @"  '''    $ $$$ 'Y$c$$c$$$cc$$$c`$$$'`` `$$$'`` $$'     $$""""   $$$$$$c    ",
-                @" 88b    dP 888    Y88 888   888,888     888   o88oo,.__888oo,__ 888b '88bo,",
-                @"  'YMmMY'  MMM     YM YMM   ''` 'MM,    'MM,  ''''YUMMM''''YUMMMMMMM   'W' ",
-                @"                         by l0ss and Sh3r4 - github.com/SnaffCon/Snaffler  "
+                @"  ____  _                        _             _ _ _             ",
+                @" / ___|| |__   __ _ _ __ ___    / \  _   _  __| (_) |_ ___  _ __ ",
+                @" \___ \| '_ \ / _` | '__/ _ \  / _ \| | | |/ _` | | __/ _ \| '__|",
+                @"  ___) | | | | (_| | | |  __/ / ___ \ |_| | (_| | | || (_) | |   ",
+                @" |____/|_| |_|\__,_|_|  \___||_/   \_\__,_|\__,_|_|\__\___/|_|   ",
+                @"                                                                  ",
+                @"              Network Share Security Auditing Tool                "
             };
 
             ConsoleColor[] patternOne =

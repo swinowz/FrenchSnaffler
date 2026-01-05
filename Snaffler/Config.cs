@@ -13,7 +13,7 @@ using System.Security;
 using System.Collections.Generic;
 using System.Net;
 
-namespace Snaffler
+namespace ShareAuditor
 {
     public static class Config
     {
@@ -79,9 +79,9 @@ namespace Snaffler
                 "Enables outputting results to stdout as soon as they're found. You probably want this if you're not using -o.",
                 false);
             ValueArgument<int> interestLevel = new ValueArgument<int>('b', "interest", "Interest level to report (0-3)");
-            ValueArgument<string> snaffleArg = new ValueArgument<string>('m', "snaffle",
-                "Enables and assigns an output dir for Snaffler to automatically snaffle a copy of any found files.");
-            ValueArgument<long> snaffleSizeArg = new ValueArgument<long>('l', "snafflesize", "Maximum size of file to snaffle, in bytes. Defaults to 10MB.");
+            ValueArgument<string> snaffleArg = new ValueArgument<string>('m', "collect",
+                "Enables and assigns an output dir for ShareAuditor to automatically collect a copy of any found files.");
+            ValueArgument<long> snaffleSizeArg = new ValueArgument<long>('l', "collectsize", "Maximum size of file to collect, in bytes. Defaults to 10MB.");
             //var fileHuntArg = new SwitchArgument('f', "filehuntoff",
             //    "Disables file discovery, will only perform computer and share discovery.", false);
             ValueArgument<string> dirTargetArg = new ValueArgument<string>('i', "dirtarget",
@@ -94,18 +94,18 @@ namespace Snaffler
                 "The maximum size file (in bytes) to search inside for interesting strings. Defaults to 500k.");
             ValueArgument<int> grepContextArg = new ValueArgument<int>('j', "grepcontext",
                 "How many bytes of context either side of found strings in files to show, e.g. -j 200");
-            SwitchArgument domainUserArg = new SwitchArgument('u', "domainusers", "Makes Snaffler grab a list of interesting-looking accounts from the domain and uses them in searches.", false);
-            ValueArgument<int> maxThreadsArg = new ValueArgument<int>('x', "maxthreads", "How many threads to be snaffling with. Any less than 4 and you're gonna have a bad time.");
-            SwitchArgument tsvArg = new SwitchArgument('y', "tsv", "Makes Snaffler output as tsv.", false);
-            SwitchArgument dfsArg = new SwitchArgument('f', "dfs", "Limits Snaffler to finding file shares via DFS, for \"OPSEC\" reasons.", false);
+            SwitchArgument domainUserArg = new SwitchArgument('u', "domainusers", "Makes ShareAuditor grab a list of interesting-looking accounts from the domain and uses them in searches.", false);
+            ValueArgument<int> maxThreadsArg = new ValueArgument<int>('x', "maxthreads", "How many threads to be scanning with. Any less than 4 and you're gonna have a bad time.");
+            SwitchArgument tsvArg = new SwitchArgument('y', "tsv", "Makes ShareAuditor output as tsv.", false);
+            SwitchArgument dfsArg = new SwitchArgument('f', "dfs", "Limits ShareAuditor to finding file shares via DFS, for \"OPSEC\" reasons.", false);
             SwitchArgument findSharesOnlyArg = new SwitchArgument('a', "sharesonly",
                 "Stops after finding shares, doesn't walk their filesystems.", false);
             ValueArgument<string> compExclusionArg = new ValueArgument<string>('k', "exclusions", "Path to a file containing a list of computers to exclude from scanning.");
             ValueArgument<string> compTargetArg = new ValueArgument<string>('n', "comptarget", "List of computers in a file(e.g C:\targets.txt), a single Computer (or comma separated list) to target.");
-            ValueArgument<string> ruleDirArg = new ValueArgument<string>('p', "rulespath", "Path to a directory full of toml-formatted rules. Snaffler will load all of these in place of the default ruleset.");
+            ValueArgument<string> ruleDirArg = new ValueArgument<string>('p', "rulespath", "Path to a directory full of toml-formatted rules. ShareAuditor will load all of these in place of the default ruleset.");
             ValueArgument<string> logType = new ValueArgument<string>('t', "logtype", "Type of log you would like to output. Currently supported options are plain and JSON. Defaults to plain.");
             ValueArgument<string> timeOutArg = new ValueArgument<string>('e', "timeout",
-                "Interval between status updates (in minutes) also acts as a timeout for AD data to be gathered via LDAP. Turn this knob up if you aren't getting any computers from AD when you run Snaffler through a proxy or other slow link. Default = 5");
+                "Interval between status updates (in minutes) also acts as a timeout for AD data to be gathered via LDAP. Turn this knob up if you aren't getting any computers from AD when you run ShareAuditor through a proxy or other slow link. Default = 5");
             // list of letters i haven't used yet: gnqw
 
             CommandLineParser.CommandLineParser parser = new CommandLineParser.CommandLineParser();
@@ -417,9 +417,55 @@ namespace Snaffler
 
                 if (parsedConfig.ClassifierRules.Count <= 0)
                 {
-                    // First, check if SnaffRules directory exists in executable location
-                    string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                    string rulesDir = Path.Combine(exeDir, "SnaffRules", "DefaultRules");
+                    // For single-file apps, try multiple locations to find SnaffRules:
+                    // 1. Directory where exe actually resides (from Environment.ProcessPath - .NET 6+)
+                    // 2. Directory where exe was launched from (GetCurrentDirectory)
+                    // 3. AppContext.BaseDirectory (temp extraction folder)
+                    
+                    string rulesDir = null;
+                    string exeDir = null;
+                    string[] searchPaths = new string[4];
+                    
+                    // Try the actual exe location first (most reliable for single-file)
+                    try
+                    {
+                        string exePath = Environment.ProcessPath;
+                        if (!string.IsNullOrEmpty(exePath))
+                        {
+                            exeDir = Path.GetDirectoryName(exePath);
+                            searchPaths[0] = exeDir;
+                            rulesDir = Path.Combine(exeDir, "SnaffRules", "DefaultRules");
+                        }
+                    }
+                    catch { }
+                    
+                    // If not found, try Process.MainModule.FileName
+                    if (rulesDir == null || !Directory.Exists(rulesDir))
+                    {
+                        try
+                        {
+                            exeDir = Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName);
+                            searchPaths[1] = exeDir;
+                            rulesDir = Path.Combine(exeDir, "SnaffRules", "DefaultRules");
+                        }
+                        catch { }
+                    }
+                    
+                    // If not found, try current working directory
+                    if (rulesDir == null || !Directory.Exists(rulesDir))
+                    {
+                        exeDir = Directory.GetCurrentDirectory();
+                        searchPaths[2] = exeDir;
+                        rulesDir = Path.Combine(exeDir, "SnaffRules", "DefaultRules");
+                    }
+                    
+                    // If still not found, try AppContext.BaseDirectory
+                    if (!Directory.Exists(rulesDir))
+                    {
+                        exeDir = AppContext.BaseDirectory;
+                        searchPaths[3] = exeDir;
+                        rulesDir = Path.Combine(exeDir, "SnaffRules", "DefaultRules");
+                    }
                     
                     if (Directory.Exists(rulesDir) && String.IsNullOrWhiteSpace(parsedConfig.RuleDir))
                     {

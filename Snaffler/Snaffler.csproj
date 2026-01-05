@@ -6,8 +6,8 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
-    <RootNamespace>Snaffler</RootNamespace>
-    <AssemblyName>Snaffler</AssemblyName>
+    <RootNamespace>ShareAuditor</RootNamespace>
+    <AssemblyName>ShareAuditor</AssemblyName>
     <DefineConstants>$(DefineConstants);ULTRASNAFFLER</DefineConstants>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
@@ -23,7 +23,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="SnaffRules\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Embed all .toml rules as resources for single-file deployment -->
+    <EmbeddedResource Include="SnaffRules\DefaultRules\**\*.toml" />
   </ItemGroup>
 
 </Project>

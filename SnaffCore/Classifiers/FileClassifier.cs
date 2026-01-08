@@ -137,11 +137,15 @@ namespace SnaffCore.Classifiers
                     }
                     return false;
                 case MatchAction.Relay:
-                    // figure out which rule to give it to, then hand it off
+                    // Optimized relay processing: batch content reads for all content-based relay targets
                     try
                     {
                         bool fLoggedContentSizeWarning = false;
-
+                        
+                        // Separate relay targets by enumeration scope
+                        var contentTargets = new List<ClassifierRule>();
+                        var fileTargets = new List<string>();
+                        
                         foreach (string relayTarget in ClassifierRule.RelayTargets)
                         {
                             ClassifierRule nextRule =
@@ -149,32 +153,44 @@ namespace SnaffCore.Classifiers
 
                             if (nextRule.EnumerationScope == EnumerationScope.ContentsEnumeration)
                             {
-                                
                                 if (fileInfo.Length > MyOptions.MaxSizeToGrep)
                                 {
                                     if(!fLoggedContentSizeWarning)
                                     {
-                                        // Just log once per relay rule, no need to fill up the log with one for each relay target
                                         Mq.Trace("The following file was bigger than the MaxSizeToGrep config parameter:" + fileInfo.FullName);
                                         fLoggedContentSizeWarning = true;
                                     }
-                                    
                                     continue;
                                 }
-
-                                ContentClassifier nextContentClassifier = new ContentClassifier(nextRule);
-                                nextContentClassifier.ClassifyContent(fileInfo);
+                                
+                                contentTargets.Add(nextRule);
                             }
                             else if (nextRule.EnumerationScope == EnumerationScope.FileEnumeration)
                             {
-                                FileClassifier nextFileClassifier = new FileClassifier(nextRule);
-                                nextFileClassifier.ClassifyFile(fileInfo);
+                                fileTargets.Add(relayTarget);
                             }
                             else
                             {
                                 Mq.Error("You've got a misconfigured file ClassifierRule named " + ClassifierRule.RuleName + ".");
                             }
                         }
+                        
+                        // Batch process all content targets with a single file read
+                        if (contentTargets.Any())
+                        {
+                            ContentBatchClassifier batchClassifier = new ContentBatchClassifier();
+                            batchClassifier.ClassifyContentBatch(fileInfo, contentTargets);
+                        }
+                        
+                        // Process file-based targets normally
+                        foreach (string fileTarget in fileTargets)
+                        {
+                            ClassifierRule nextRule =
+                                MyOptions.ClassifierRules.First(thing => thing.RuleName == fileTarget);
+                            FileClassifier nextFileClassifier = new FileClassifier(nextRule);
+                            nextFileClassifier.ClassifyFile(fileInfo);
+                        }
+                        
                         return false;
                     }
                     catch (IOException e)

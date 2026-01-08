@@ -10,6 +10,10 @@
     <AssemblyName>ShareAuditor</AssemblyName>
     <DefineConstants>$(DefineConstants);ULTRASNAFFLER</DefineConstants>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <OutputPath>..\release\</OutputPath>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>

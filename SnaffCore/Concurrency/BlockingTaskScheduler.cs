@@ -48,8 +48,6 @@ namespace SnaffCore.Concurrency
             // set up to not add the task as default
             bool proceed = false;
 
-            Console.WriteLine($"[DEBUG-SCHED] New task requested, current queue: {Scheduler?.GetTaskCounters().CurrentTasksQueued ?? -1}");
-
             while (proceed == false) // loop the calling thread until we are allowed to do the thing
             {
                 lock (syncLock) // take out the lock
@@ -61,23 +59,18 @@ namespace SnaffCore.Concurrency
                     {
                         if (Scheduler.GetTaskCounters().CurrentTasksQueued >= _maxBacklog)
                         {
-                            Console.WriteLine($"[DEBUG-SCHED] Backlog full, waiting... ({Scheduler.GetTaskCounters().CurrentTasksQueued}/{_maxBacklog})");
                             continue;
                         }
                     }
 
                     // okay, let's add the thing
                     proceed = true;
-                    Console.WriteLine($"[DEBUG-SCHED] Task added to queue, starting...");
-
                     WindowsIdentity impersonatedUser = WindowsIdentity.GetCurrent();
                     _taskFactory.StartNew(() => {
-                        Console.WriteLine($"[DEBUG-SCHED] Task thread started");
                         WindowsIdentity.RunImpersonated(impersonatedUser.AccessToken, () =>
                         {
                             action();
                         });
-                        Console.WriteLine($"[DEBUG-SCHED] Task thread completed");
                     }, _cancellationSource.Token);
                 }
             }
@@ -125,11 +118,6 @@ namespace SnaffCore.Concurrency
                 this._taskCounters.CurrentTasksRemaining = tasksCount + delegatesCount;
                 this._taskCounters.CompletedTasks = totalQueued - this._taskCounters.CurrentTasksRemaining;
                 this._taskCounters.MaxParallelism = this._maxDegreeOfParallelism;
-                
-                if (this._taskCounters.CurrentTasksRemaining > 0)
-                {
-                    Console.WriteLine($"[DEBUG-COUNTERS] _tasks.Count={tasksCount}, _delegatesQueuedOrRunning={delegatesCount}, MaxPara={_maxDegreeOfParallelism}");
-                }
             }
         }
 
@@ -211,14 +199,12 @@ namespace SnaffCore.Concurrency
                             if (_tasks.Count == 0)
                             {
                                 --_delegatesQueuedOrRunning;
-                                Console.WriteLine($"[DEBUG-WORKER] Worker thread exiting, _delegatesQueuedOrRunning now={_delegatesQueuedOrRunning}");
                                 
                                 // CRITICAL: Double-check pattern to prevent orphaned tasks
                                 // Another thread might have queued work while we were checking
                                 if (_tasks.Count > 0 && _delegatesQueuedOrRunning < _maxDegreeOfParallelism)
                                 {
                                     ++_delegatesQueuedOrRunning;
-                                    Console.WriteLine($"[DEBUG-WORKER] Work added during exit check, staying alive. _delegatesQueuedOrRunning now={_delegatesQueuedOrRunning}");
                                     continue;  // Keep processing
                                 }
                                 

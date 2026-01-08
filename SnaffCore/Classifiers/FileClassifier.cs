@@ -74,8 +74,6 @@ namespace SnaffCore.Classifiers
                 // check if it matches
                 textResult = textClassifier.TextMatch(stringToMatch);
                 
-                Console.WriteLine($"[DEBUG-RELAY] Rule:{ClassifierRule.RuleName} String:'{stringToMatch}' Match:{textResult != null}");
-                
                 if (textResult == null)
                 {
                     // if it doesn't we just bail now.
@@ -139,8 +137,6 @@ namespace SnaffCore.Classifiers
                     }
                     return false;
                 case MatchAction.Relay:
-                    Console.WriteLine($"[DEBUG-RELAY-ACTION] Rule:{ClassifierRule.RuleName} File:{fileInfo.Name} Targets:{ClassifierRule.RelayTargets.Count}");
-                    
                     // figure out which rule to give it to, then hand it off
                     try
                     {
@@ -148,14 +144,11 @@ namespace SnaffCore.Classifiers
 
                         foreach (string relayTarget in ClassifierRule.RelayTargets)
                         {
-                            Console.WriteLine($"[DEBUG-RELAY-TARGET] Processing target:{relayTarget}");
-                            
                             ClassifierRule nextRule =
                                 MyOptions.ClassifierRules.First(thing => thing.RuleName == relayTarget);
 
                             if (nextRule.EnumerationScope == EnumerationScope.ContentsEnumeration)
                             {
-                                Console.WriteLine($"[DEBUG-RELAY-CONTENT] Calling ContentClassifier for rule:{relayTarget}");
                                 
                                 if (fileInfo.Length > MyOptions.MaxSizeToGrep)
                                 {

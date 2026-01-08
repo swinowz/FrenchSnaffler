@@ -149,8 +149,7 @@ namespace SnaffCore
                 Mq.Error("OctoParrot says: AWK! I SHOULDN'T BE!");
             }
 
-            // Poll for completion every second instead of waiting for the timer
-            Console.WriteLine("[DEBUG-MAIN] Entering completion polling loop...");
+            // Poll for completion with clean progress indication
             while (true)
             {
                 ShareTaskScheduler.Scheduler.RecalculateCounters();
@@ -165,19 +164,22 @@ namespace SnaffCore
                 bool treeDone = TreeTaskScheduler.Done();
                 bool fileDone = FileTaskScheduler.Done();
                 
-                Console.WriteLine($"[DEBUG-MAIN] ShareScheduler - Queued:{shareCounters.CurrentTasksQueued} Running:{shareCounters.CurrentTasksRunning} Done:{shareDone}");
-                Console.WriteLine($"[DEBUG-MAIN] TreeScheduler  - Queued:{treeCounters.CurrentTasksQueued} Running:{treeCounters.CurrentTasksRunning} Done:{treeDone}");
-                Console.WriteLine($"[DEBUG-MAIN] FileScheduler  - Queued:{fileCounters.CurrentTasksQueued} Running:{fileCounters.CurrentTasksRunning} Done:{fileDone}");
+                // Simple progress indicator every 3 seconds
+                int totalQueued = (int)(shareCounters.CurrentTasksQueued + treeCounters.CurrentTasksQueued + fileCounters.CurrentTasksQueued);
+                int totalRunning = (int)(shareCounters.CurrentTasksRunning + treeCounters.CurrentTasksRunning + fileCounters.CurrentTasksRunning);
+                if (totalQueued > 0 || totalRunning > 0)
+                {
+                    Mq.Info($"Progress: {totalQueued} files queued, {totalRunning} processing, {fileCounters.CompletedTasks} completed");
+                }
                 
                 if (fileDone && shareDone && treeDone)
                 {
-                    Console.WriteLine("[DEBUG-MAIN] All tasks completed, exiting poll loop");
                     Mq.Info("All scanning tasks completed.");
                     Mq.Info($"Scanned {fileCounters.CompletedTasks} files in total.");
                     break;
                 }
                 
-                Thread.Sleep(1000); // Check every second
+                Thread.Sleep(3000); // Check every 3 seconds
             }
 
             StatusUpdate();

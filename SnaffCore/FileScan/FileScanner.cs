@@ -16,7 +16,6 @@ namespace SnaffCore.FileScan
         }
         public void ScanFile(string file)
         {
-            Console.WriteLine($"[DEBUG-FILE] ScanFile started: {Path.GetFileName(file)}");
             try
             {
                 FileInfo fileInfo = new FileInfo(file);
@@ -26,11 +25,9 @@ namespace SnaffCore.FileScan
                     FileClassifier fileClassifier = new FileClassifier(classifier);
                     if (fileClassifier.ClassifyFile(fileInfo))
                     {
-                        Console.WriteLine($"[DEBUG-FILE] File matched rule: {classifier.RuleName}");
                         return;
                     };
                 }
-                Console.WriteLine($"[DEBUG-FILE] No match for: {Path.GetFileName(file)}");
             }
             catch (FileNotFoundException e)
             {

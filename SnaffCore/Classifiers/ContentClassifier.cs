@@ -185,7 +185,7 @@ namespace SnaffCore.Classifiers
         {
             try
             {
-                // Timeout after 10 seconds to prevent hanging on problematic files
+                // Timeout after 5 seconds to prevent hanging on problematic files
                 var task = System.Threading.Tasks.Task.Run(() =>
                 {
                     try
@@ -200,7 +200,7 @@ namespace SnaffCore.Classifiers
                     }
                 });
 
-                if (task.Wait(TimeSpan.FromSeconds(10)))
+                if (task.Wait(TimeSpan.FromSeconds(5)))
                 {
                     return task.Result ?? "";
                 }

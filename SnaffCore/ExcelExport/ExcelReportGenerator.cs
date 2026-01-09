@@ -203,7 +203,7 @@ namespace SnaffCore.ExcelExport
                     {
                         // Check if this row contains credential header keywords
                         bool hasUserKeyword = potentialHeaders.Any(h => 
-                            Regex.IsMatch(h ?? "", @"(?i)(identifiant|login|username|utilisateur|user|compte|email)", RegexOptions.IgnoreCase));
+                            Regex.IsMatch(h ?? "", @"(?i)(identifiant|login|username|utilisateur|user|compte|email|admin|administrateur)", RegexOptions.IgnoreCase));
                         bool hasPassKeyword = potentialHeaders.Any(h => 
                             Regex.IsMatch(h ?? "", @"(?i)(mdp|password|pwd|mot.*passe|pass)", RegexOptions.IgnoreCase));
                         
@@ -228,7 +228,7 @@ namespace SnaffCore.ExcelExport
                 {
                     string header = headers[i]?.Trim()?.ToLower() ?? "";
                     
-                    if (userColIndex == -1 && Regex.IsMatch(header, @"(identifiant|login|username|utilisateur|user|compte|email)"))
+                    if (userColIndex == -1 && Regex.IsMatch(header, @"(identifiant|login|username|utilisateur|user|compte|email|admin|administrateur)"))
                         userColIndex = i;
                     if (passColIndex == -1 && Regex.IsMatch(header, @"(mdp|password|pwd|mot.*passe|pass)"))
                         passColIndex = i;

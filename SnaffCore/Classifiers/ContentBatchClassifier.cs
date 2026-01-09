@@ -120,9 +120,7 @@ namespace SnaffCore.Classifiers
                     {
                         Mq.FileResult(fileResult);
                     }
-                    
-                    // Stop on first match to avoid duplicate findings
-                    return;
+                    // Continue checking other rules - don't return!
                 }
             }
         }
@@ -151,9 +149,7 @@ namespace SnaffCore.Classifiers
                     {
                         Mq.FileResult(fileResult);
                     }
-                    
-                    // Stop on first match to avoid duplicate findings
-                    return;
+                    // Continue checking other rules - a file can match multiple credential patterns!
                 }
             }
         }
@@ -173,8 +169,7 @@ namespace SnaffCore.Classifiers
                     {
                         Mq.FileResult(fileResult);
                     }
-                    
-                    return;
+                    // Continue checking other rules - don't return!
                 }
             }
         }
@@ -197,18 +192,36 @@ namespace SnaffCore.Classifiers
 #if ULTRASNAFFLER
         private string ParseFileToString(FileInfo fileInfo)
         {
-            // Parse office documents using Toxy
-            // Implementation from original ContentClassifier
             try
             {
-                ParserContext context = new ParserContext(fileInfo.FullName);
-                IDocumentParser parser = ParserFactory.CreateDocument(context);
-                ToxyDocument document = parser.Parse();
-                return document.ToString();
+                // Timeout after 10 seconds to prevent hanging on problematic files
+                var task = System.Threading.Tasks.Task.Run(() =>
+                {
+                    try
+                    {
+                        ParserContext context = new ParserContext(fileInfo.FullName);
+                        ITextParser parser = ParserFactory.CreateText(context);
+                        return parser.Parse() ?? "";
+                    }
+                    catch
+                    {
+                        return "";
+                    }
+                });
+
+                if (task.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    return task.Result ?? "";
+                }
+                else
+                {
+                    // Timeout - return empty to skip this file
+                    return "";
+                }
             }
             catch
             {
-                return File.ReadAllText(fileInfo.FullName);
+                return "";
             }
         }
 #endif

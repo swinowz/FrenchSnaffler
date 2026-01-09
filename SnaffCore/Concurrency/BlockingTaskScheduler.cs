@@ -100,24 +100,20 @@ namespace SnaffCore.Concurrency
         }
         public void RecalculateCounters()
         {
-            // Take snapshot under lock to ensure atomic read
-            int tasksCount, delegatesCount, totalQueued;
-            
+            // Calculate all counters atomically under lock
             lock (_tasks)
             {
-                tasksCount = _tasks.Count;
-                delegatesCount = _delegatesQueuedOrRunning;
-                totalQueued = (int)_taskCounters.TotalTasksQueued;
-            }
-            
-            // Now calculate outside the lock
-            lock (_taskCounters)
-            {
-                this._taskCounters.CurrentTasksQueued = tasksCount;
-                this._taskCounters.CurrentTasksRunning = delegatesCount;
-                this._taskCounters.CurrentTasksRemaining = tasksCount + delegatesCount;
-                this._taskCounters.CompletedTasks = totalQueued - this._taskCounters.CurrentTasksRemaining;
-                this._taskCounters.MaxParallelism = this._maxDegreeOfParallelism;
+                lock (_taskCounters)
+                {
+                    this._taskCounters.CurrentTasksQueued = _tasks.Count;
+                    this._taskCounters.CurrentTasksRunning = _delegatesQueuedOrRunning;
+                    this._taskCounters.CurrentTasksRemaining = _tasks.Count + _delegatesQueuedOrRunning;
+                    // Use current TotalTasksQueued (not snapshot) to avoid negative values
+                    this._taskCounters.CompletedTasks = this._taskCounters.TotalTasksQueued - this._taskCounters.CurrentTasksRemaining;
+                    // Ensure non-negative
+                    if (this._taskCounters.CompletedTasks < 0) this._taskCounters.CompletedTasks = 0;
+                    this._taskCounters.MaxParallelism = this._maxDegreeOfParallelism;
+                }
             }
         }
 
@@ -165,12 +161,10 @@ namespace SnaffCore.Concurrency
             {
                 _tasks.AddLast(task);
                 ++_taskCounters.TotalTasksQueued;
-                Console.WriteLine($"[DEBUG-QUEUE] Task queued, _delegatesQueuedOrRunning={_delegatesQueuedOrRunning}, _maxDegreeOfParallelism={_maxDegreeOfParallelism}");
                 
                 if (_delegatesQueuedOrRunning < _maxDegreeOfParallelism)
                 {
                     ++_delegatesQueuedOrRunning;
-                    Console.WriteLine($"[DEBUG-QUEUE] Starting new delegate, _delegatesQueuedOrRunning now={_delegatesQueuedOrRunning}");
                     NotifyThreadPoolOfPendingWork();
                 }
                 

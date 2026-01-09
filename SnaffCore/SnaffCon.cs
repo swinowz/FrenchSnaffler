@@ -150,6 +150,9 @@ namespace SnaffCore
             }
 
             // Poll for completion with clean progress indication
+            DateTime scanStart = DateTime.Now;
+            long lastCompleted = 0;
+            
             while (true)
             {
                 ShareTaskScheduler.Scheduler.RecalculateCounters();
@@ -164,22 +167,28 @@ namespace SnaffCore
                 bool treeDone = TreeTaskScheduler.Done();
                 bool fileDone = FileTaskScheduler.Done();
                 
-                // Simple progress indicator every 3 seconds
+                // Progress with rate calculation
                 int totalQueued = (int)(shareCounters.CurrentTasksQueued + treeCounters.CurrentTasksQueued + fileCounters.CurrentTasksQueued);
                 int totalRunning = (int)(shareCounters.CurrentTasksRunning + treeCounters.CurrentTasksRunning + fileCounters.CurrentTasksRunning);
+                long completed = (long)fileCounters.CompletedTasks;
+                
+                // Calculate files per minute
+                TimeSpan elapsed = DateTime.Now - scanStart;
+                double filesPerMin = elapsed.TotalMinutes > 0 ? completed / elapsed.TotalMinutes : 0;
+                
                 if (totalQueued > 0 || totalRunning > 0)
                 {
-                    Mq.Info($"Progress: {totalQueued} files queued, {totalRunning} processing, {fileCounters.CompletedTasks} completed");
+                    Mq.Info($"Progress: {totalQueued} queued, {totalRunning} processing, {completed} done | {filesPerMin:F0} files/min");
                 }
                 
                 if (fileDone && shareDone && treeDone)
                 {
                     Mq.Info("All scanning tasks completed.");
-                    Mq.Info($"Scanned {fileCounters.CompletedTasks} files in total.");
+                    Mq.Info($"Scanned {completed} files in {elapsed.TotalSeconds:F0}s ({filesPerMin:F0} files/min)");
                     break;
                 }
                 
-                Thread.Sleep(3000); // Check every 3 seconds
+                Thread.Sleep(10000); // Check every 10 seconds
             }
 
             StatusUpdate();

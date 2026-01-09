@@ -39,8 +39,6 @@ namespace SnaffCore.ExcelExport
             if (_limitReached) return;
 
             _totalFilesScanned++;
-            Console.WriteLine($"[DEBUG-EXCEL] AddFinding called for: {result.FileInfo.FullName}");
-            Console.WriteLine($"[DEBUG-EXCEL] Current findings count: {_findings.Count}");
 
             if (_findings.Count >= _maxFindings)
             {
@@ -68,7 +66,6 @@ namespace SnaffCore.ExcelExport
             }
             catch { /* Ignore path parsing errors */ }
 
-            Console.WriteLine($"[DEBUG-EXCEL] Creating finding object for: {result.FileInfo.Name}");
             var finding = new ExcelFinding
             {
                 Severity = result.MatchedRule.Triage.ToString(),
@@ -82,19 +79,15 @@ namespace SnaffCore.ExcelExport
             // Extract credentials if TextResult is available
             if (result.TextResult != null && !string.IsNullOrEmpty(result.TextResult.MatchContext))
             {
-                Console.WriteLine($"[DEBUG-EXCEL] TextResult available, extracting credentials...");
                 // Use FullContent for tabular extraction if available, fallback to MatchContext
                 string contentForExtraction = result.TextResult.FullContent ?? result.TextResult.MatchContext;
-                Console.WriteLine($"[DEBUG-EXCEL] Content length: {contentForExtraction?.Length ?? 0}");
                 var extractionResult = ExtractAllCredentials(contentForExtraction);
-                Console.WriteLine($"[DEBUG-EXCEL] ExtractAllCredentials returned: {extractionResult.AllCredentials?.Count ?? 0} creds");
                 
                 if (extractionResult.AllCredentials != null && extractionResult.AllCredentials.Count > 0)
                 {
                     // Mark this file as having extracted credentials
                     _filesWithExtractedCredentials.Add(result.FileInfo.FullName);
                     
-                    Console.WriteLine($"[DEBUG-EXCEL] Adding {extractionResult.AllCredentials.Count} credential rows...");
                     // Create ONE ROW PER CREDENTIAL in Excel
                     for (int i = 0; i < extractionResult.AllCredentials.Count; i++)
                     {
@@ -115,12 +108,10 @@ namespace SnaffCore.ExcelExport
                         };
                         _findings.Add(credFinding);
                     }
-                    Console.WriteLine($"[DEBUG-EXCEL] Done adding credentials for {result.FileInfo.Name}, returning...");
                     return; // Already added all findings, don't add the base finding
                 }
                 else
                 {
-                    Console.WriteLine($"[DEBUG] No tabular creds, trying fallback extraction...");
                     // Fallback to old extraction method
                     var credentials = ExtractCredentials(contentForExtraction);
                     finding.Username = credentials.Username;
@@ -130,7 +121,6 @@ namespace SnaffCore.ExcelExport
             }
             else
             {
-                Console.WriteLine($"[DEBUG] No TextResult, using filename as preview");
                 // For file-based matches (e.g., keyfiles), use filename as preview
                 finding.ContentPreview = System.IO.Path.GetFileName(result.FileInfo.FullName);
             }

@@ -185,7 +185,7 @@ namespace SnaffCore.Classifiers
         {
             try
             {
-                // Timeout after 30 seconds to prevent hanging on problematic files
+                // Timeout after 10 seconds to prevent hanging on problematic files
                 var task = System.Threading.Tasks.Task.Run(() =>
                 {
                     try
@@ -200,19 +200,17 @@ namespace SnaffCore.Classifiers
                     }
                 });
 
-                if (task.Wait(TimeSpan.FromSeconds(30)))
+                if (task.Wait(TimeSpan.FromSeconds(10)))
                 {
                     return task.Result ?? "";
                 }
                 else
                 {
-                    Console.WriteLine($"[DEBUG-SCAN] TIMEOUT parsing: {fileInfo.Name}");
                     return "";
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"[DEBUG-SCAN] Error parsing {fileInfo.Name}: {ex.Message}");
                 return "";
             }
         }

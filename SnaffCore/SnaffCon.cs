@@ -152,6 +152,7 @@ namespace SnaffCore
             // Poll for completion with clean progress indication
             DateTime scanStart = DateTime.Now;
             long lastCompleted = 0;
+            DateTime lastCheck = DateTime.Now;
             
             while (true)
             {
@@ -172,19 +173,38 @@ namespace SnaffCore
                 int totalRunning = (int)(shareCounters.CurrentTasksRunning + treeCounters.CurrentTasksRunning + fileCounters.CurrentTasksRunning);
                 long completed = (long)fileCounters.CompletedTasks;
                 
-                // Calculate files per minute
-                TimeSpan elapsed = DateTime.Now - scanStart;
-                double filesPerMin = elapsed.TotalMinutes > 0 ? completed / elapsed.TotalMinutes : 0;
+                // Calculate INSTANTANEOUS rate (files since last check, extrapolated to per-minute)
+                DateTime now = DateTime.Now;
+                double intervalSeconds = (now - lastCheck).TotalSeconds;
+                long filesThisInterval = completed - lastCompleted;
+                double currentRate = intervalSeconds > 0 ? (filesThisInterval / intervalSeconds) * 60 : 0;
+                
+                // Calculate ETA
+                string etaStr = "";
+                if (currentRate > 0 && totalQueued > 0)
+                {
+                    double etaMinutes = totalQueued / currentRate;
+                    if (etaMinutes < 1)
+                        etaStr = $" | ETA: {etaMinutes * 60:F0}s";
+                    else
+                        etaStr = $" | ETA: {etaMinutes:F1}m";
+                }
                 
                 if (totalQueued > 0 || totalRunning > 0)
                 {
-                    Mq.Info($"Progress: {totalQueued} queued, {totalRunning} processing, {completed} done | {filesPerMin:F0} files/min");
+                    Mq.Info($"Progress: {totalQueued} queued, {totalRunning} active, {completed} done | {currentRate:F0} files/min{etaStr}");
                 }
+                
+                // Update tracking for next interval
+                lastCompleted = completed;
+                lastCheck = now;
                 
                 if (fileDone && shareDone && treeDone)
                 {
+                    TimeSpan elapsed = now - scanStart;
+                    double avgRate = elapsed.TotalMinutes > 0 ? completed / elapsed.TotalMinutes : 0;
                     Mq.Info("All scanning tasks completed.");
-                    Mq.Info($"Scanned {completed} files in {elapsed.TotalSeconds:F0}s ({filesPerMin:F0} files/min)");
+                    Mq.Info($"Scanned {completed} files in {elapsed.TotalSeconds:F0}s (avg {avgRate:F0} files/min)");
                     break;
                 }
                 

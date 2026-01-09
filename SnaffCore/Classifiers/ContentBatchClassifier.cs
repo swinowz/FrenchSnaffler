@@ -7,6 +7,8 @@ using static SnaffCore.Config.Options;
 
 #if ULTRASNAFFLER
 using Toxy;
+using Toxy.Parsers;
+using ClosedXML.Excel;
 #endif
 
 namespace SnaffCore.Classifiers
@@ -194,35 +196,245 @@ namespace SnaffCore.Classifiers
         {
             try
             {
-                // Timeout after 5 seconds to prevent hanging on problematic files
-                var task = System.Threading.Tasks.Task.Run(() =>
+                string ext = fileInfo.Extension.ToLower();
+                
+                // For .xlsx files, use ClosedXML (much faster than Toxy)
+                if (ext == ".xlsx" || ext == ".xlsm")
                 {
-                    try
+                    var xlsxTask = System.Threading.Tasks.Task.Run(() =>
                     {
-                        ParserContext context = new ParserContext(fileInfo.FullName);
-                        ITextParser parser = ParserFactory.CreateText(context);
-                        return parser.Parse() ?? "";
-                    }
-                    catch
-                    {
-                        return "";
-                    }
-                });
+                        try
+                        {
+                            return ParseXlsxWithClosedXML(fileInfo.FullName);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[DEBUG-XLSX-FAIL] {fileInfo.Name}: {ex.Message}");
+                            return null;
+                        }
+                    });
 
-                if (task.Wait(TimeSpan.FromSeconds(5)))
-                {
-                    return task.Result ?? "";
+                    if (xlsxTask.Wait(TimeSpan.FromSeconds(10)))
+                    {
+                        string result = xlsxTask.Result;
+                        if (result == "[PASSWORD_PROTECTED]")
+                        {
+                            // Report password-protected file for manual investigation
+                            ReportPasswordProtectedFile(fileInfo);
+                            return "";
+                        }
+                        if (!string.IsNullOrEmpty(result))
+                            return result;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[DEBUG-XLSX-TIMEOUT] {fileInfo.Name}");
+                    }
+                    
+                    // Fallback to text parser
+                    return ParseWithTextParser(fileInfo);
                 }
-                else
+                
+                // For old .xls files, use Toxy SpreadsheetParser
+                if (ext == ".xls" || ext == ".xlt" || ext == ".xltx" || ext == ".xltm")
                 {
-                    // Timeout - return empty to skip this file
-                    return "";
+                    var xlsTask = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try
+                        {
+                            ParserContext context = new ParserContext(fileInfo.FullName);
+                            ISpreadsheetParser spreadsheetParser = ParserFactory.CreateSpreadsheet(context);
+                            ToxySpreadsheet spreadsheet = spreadsheetParser.Parse();
+                            return ConvertSpreadsheetToTabDelimited(spreadsheet);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Check for password-protected .xls files
+                            string msg = ex.Message?.ToLower() ?? "";
+                            if (msg.Contains("encrypt") || msg.Contains("password") || msg.Contains("protected"))
+                            {
+                                return "[PASSWORD_PROTECTED]";
+                            }
+                            return null;
+                        }
+                    });
+
+                    if (xlsTask.Wait(TimeSpan.FromSeconds(10)))
+                    {
+                        string result = xlsTask.Result;
+                        if (result == "[PASSWORD_PROTECTED]")
+                        {
+                            ReportPasswordProtectedFile(fileInfo);
+                            return "";
+                        }
+                        if (!string.IsNullOrEmpty(result) && result.Contains("\t"))
+                            return result;
+                    }
+                    
+                    // Fallback to text parser
+                    return ParseWithTextParser(fileInfo);
                 }
+                
+                // For all other documents, use text parser
+                return ParseWithTextParser(fileInfo);
             }
             catch
             {
                 return "";
             }
+        }
+        
+        /// <summary>
+        /// Report a password-protected file for manual investigation
+        /// </summary>
+        private void ReportPasswordProtectedFile(FileInfo fileInfo)
+        {
+            // Create a synthetic rule for password-protected files
+            var rule = new ClassifierRule
+            {
+                RuleName = "PasswordProtectedFile",
+                EnumerationScope = EnumerationScope.FileEnumeration,
+                MatchAction = MatchAction.Relay,
+                Triage = Triage.Yellow,
+                Description = "Password-protected document - may contain sensitive data"
+            };
+            
+            var textResult = new TextResult
+            {
+                MatchContext = "File is password-protected or encrypted - requires manual investigation"
+            };
+            
+            var fileResult = new FileResult(fileInfo)
+            {
+                MatchedRule = rule,
+                TextResult = textResult
+            };
+            
+            Mq.FileResult(fileResult);
+        }
+        
+        /// <summary>
+        /// Parse .xlsx file using ClosedXML - fast and reliable
+        /// </summary>
+        private string ParseXlsxWithClosedXML(string filePath)
+        {
+            var sb = new System.Text.StringBuilder();
+            
+            try
+            {
+                using (var workbook = new XLWorkbook(filePath))
+                {
+                    foreach (var worksheet in workbook.Worksheets)
+                    {
+                        var usedRange = worksheet.RangeUsed();
+                        if (usedRange == null) continue;
+                        
+                        foreach (var row in usedRange.Rows())
+                        {
+                            var cells = row.Cells().Select(c => c.GetString() ?? "").ToArray();
+                            sb.AppendLine(string.Join("\t", cells));
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Check for password-protected or encrypted files
+                string msg = ex.Message?.ToLower() ?? "";
+                if (msg.Contains("encrypt") || msg.Contains("password") || msg.Contains("protected") || 
+                    msg.Contains("corrupt") || msg.Contains("invalid") || msg.Contains("zip"))
+                {
+                    // Return marker so we know it's password protected (not an error)
+                    return "[PASSWORD_PROTECTED]";
+                }
+                throw; // Re-throw other exceptions
+            }
+            
+            return sb.ToString();
+        }
+        
+        /// <summary>
+        /// Fallback text parser for non-Excel documents
+        /// </summary>
+        private string ParseWithTextParser(FileInfo fileInfo)
+        {
+            var textTask = System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    ParserContext context = new ParserContext(fileInfo.FullName);
+                    ITextParser parser = ParserFactory.CreateText(context);
+                    return parser.Parse() ?? "";
+                }
+                catch
+                {
+                    return "";
+                }
+            });
+
+            if (textTask.Wait(TimeSpan.FromSeconds(5)))
+            {
+                return textTask.Result ?? "";
+            }
+            return "";
+        }
+        
+        /// <summary>
+        /// Convert ToxySpreadsheet to tab-delimited string for credential extraction
+        /// </summary>
+        private string ConvertSpreadsheetToTabDelimited(ToxySpreadsheet spreadsheet)
+        {
+            if (spreadsheet == null || spreadsheet.Tables == null || spreadsheet.Tables.Count == 0)
+                return "";
+            
+            var sb = new System.Text.StringBuilder();
+            
+            foreach (var table in spreadsheet.Tables)
+            {
+                // Add header rows
+                if (table.HeaderRows != null)
+                {
+                    foreach (var headerRow in table.HeaderRows)
+                    {
+                        if (headerRow.Cells != null && headerRow.Cells.Count > 0)
+                        {
+                            var cellValues = new string[headerRow.LastCellIndex + 1];
+                            for (int i = 0; i <= headerRow.LastCellIndex; i++)
+                                cellValues[i] = "";
+                            
+                            foreach (var cell in headerRow.Cells)
+                            {
+                                if (cell.CellIndex >= 0 && cell.CellIndex < cellValues.Length)
+                                    cellValues[cell.CellIndex] = cell.Value ?? "";
+                            }
+                            sb.AppendLine(string.Join("\t", cellValues));
+                        }
+                    }
+                }
+                
+                // Add data rows
+                if (table.Rows != null)
+                {
+                    foreach (var row in table.Rows)
+                    {
+                        if (row.Cells != null && row.Cells.Count > 0)
+                        {
+                            var cellValues = new string[row.LastCellIndex + 1];
+                            for (int i = 0; i <= row.LastCellIndex; i++)
+                                cellValues[i] = "";
+                            
+                            foreach (var cell in row.Cells)
+                            {
+                                if (cell.CellIndex >= 0 && cell.CellIndex < cellValues.Length)
+                                    cellValues[cell.Value != null ? cell.CellIndex : cell.CellIndex] = cell.Value ?? "";
+                            }
+                            sb.AppendLine(string.Join("\t", cellValues));
+                        }
+                    }
+                }
+            }
+            
+            return sb.ToString();
         }
 #endif
     }

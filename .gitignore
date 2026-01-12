@@ -5,6 +5,11 @@
 
 .idea/
 
+# Publish output
+publish-release/
+publish-ultra/
+release/
+
 # User-specific files
 *.rsuser
 *.suo

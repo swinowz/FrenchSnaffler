@@ -136,6 +136,12 @@ namespace SnaffCore.Concurrency
                     // Extract credentials (slow - do outside lock)
                     allCreds = ExtractAllCredentialsFromTable(content);
                     
+                    // If no table credentials, try XML tag extraction
+                    if (allCreds == null || allCreds.Count == 0)
+                    {
+                        allCreds = ExtractCredentialsFromXmlTags(content);
+                    }
+                    
                     if (allCreds == null || allCreds.Count == 0)
                     {
                         singleCred = ExtractCredentialsRegex(content);
@@ -274,6 +280,56 @@ namespace SnaffCore.Concurrency
                         }
                     }
                 }
+                return credentials.Count > 0 ? credentials : null;
+            }
+            catch { return null; }
+        }
+
+        private System.Collections.Generic.List<CredentialEntry> ExtractCredentialsFromXmlTags(string content)
+        {
+            var credentials = new System.Collections.Generic.List<CredentialEntry>();
+            try
+            {
+                // Pattern: <SomePrefix.FtpPassword>value</SomePrefix.FtpPassword>
+                // Matches: FtpPassword, SmtpPassword, ExcelPassword, DbPassword, SqlPassword, LdapPassword, etc.
+                var xmlPasswordPattern = new Regex(@"<([^>]*\.)?(?<tagname>(?:ftp|smtp|excel|mail|db|sql|ldap|ssh|sftp|navision|server|database|admin)[._-]?(?:password|pwd))[^>]*>\s*(?<password>[^<]{3,}?)\s*</", 
+                    RegexOptions.IgnoreCase | RegexOptions.Multiline);
+                
+                foreach (Match match in xmlPasswordPattern.Matches(content))
+                {
+                    string password = match.Groups["password"].Value.Trim();
+                    string tagName = match.Groups["tagname"].Value;
+                    
+                    // Skip obvious placeholders
+                    if (string.IsNullOrWhiteSpace(password) || 
+                        password.Length < 3 || 
+                        password.Length > 200 ||
+                        Regex.IsMatch(password, @"(?i)^(password|pwd|none|null|empty)$"))
+                        continue;
+                    
+                    // Try to find username in nearby tags
+                    string username = "";
+                    int matchPos = match.Index;
+                    
+                    // Look for username/login/user tags within 500 chars before this password tag
+                    string contextBefore = content.Substring(Math.Max(0, matchPos - 500), Math.Min(500, matchPos));
+                    var userPattern = new Regex(@"<([^>]*\.)?(?:username|login|user|userid|user[._-]?id)[^>]*>\s*([^<]{2,}?)\s*</", 
+                        RegexOptions.IgnoreCase);
+                    var userMatches = userPattern.Matches(contextBefore);
+                    if (userMatches.Count > 0)
+                    {
+                        username = userMatches[userMatches.Count - 1].Groups[2].Value.Trim();
+                    }
+                    
+                    credentials.Add(new CredentialEntry 
+                    { 
+                        Username = username,
+                        Password = password,
+                        Service = tagName,
+                        Url = ""
+                    });
+                }
+                
                 return credentials.Count > 0 ? credentials : null;
             }
             catch { return null; }

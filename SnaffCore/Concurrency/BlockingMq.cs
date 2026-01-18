@@ -227,9 +227,28 @@ namespace SnaffCore.Concurrency
             var credentials = new System.Collections.Generic.List<CredentialEntry>();
             try
             {
-                if (!content.Contains("\t") || !content.Contains("\n")) return null;
+                // Check for tab-delimited tables
+                bool hasTabDelimiter = content.Contains("\t");
+                bool hasNewline = content.Contains("\n");
+                
+                // If no newlines and no tabs, might be single-line simple table
+                if (!hasNewline && !hasTabDelimiter)
+                {
+                    return ExtractFromSimpleTable(new[] { content });
+                }
+                
+                if (!hasNewline) return null;
+                
                 string[] lines = content.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                
+                // If no tabs, try simple space-delimited table (1-3 rows)
+                if (!hasTabDelimiter && lines.Length >= 1 && lines.Length <= 3)
+                {
+                    return ExtractFromSimpleTable(lines);
+                }
+                
                 if (lines.Length < 2) return null;
+                if (!hasTabDelimiter) return null;
 
                 int headerIndex = -1;
                 string[] headers = null;
@@ -296,6 +315,96 @@ namespace SnaffCore.Concurrency
             catch { return null; }
         }
 
+        private System.Collections.Generic.List<CredentialEntry> ExtractFromSimpleTable(string[] lines)
+        {
+            var credentials = new System.Collections.Generic.List<CredentialEntry>();
+            try
+            {
+                // Handle simple tables - could be multi-line or single-line with header embedded
+                if (lines.Length == 0 || lines.Length > 3) return null;
+                
+                // Try to find credential keywords in any line
+                string contentLower = string.Join(" ", lines).ToLower();
+                bool hasUserKeyword = Regex.IsMatch(contentLower, @"(identifiant|login|username|utilisateur|user|compte)");
+                bool hasPassKeyword = Regex.IsMatch(contentLower, @"(mdp|password|pwd|mot.*passe|pass)");
+                
+                if (!hasUserKeyword || !hasPassKeyword) return null;
+                
+                // Case 1: Single line with header and data (e.g., "Service Username Password  FTP Server ftpadmin FtpPass2024!")
+                if (lines.Length == 1)
+                {
+                    string content = lines[0];
+                    // Pattern: find where "Password" keyword ends, then look for data after multiple spaces
+                    // Match: "Service Username Password" followed by "  FTP Server ftpadmin FtpPass2024!"
+                    var match = Regex.Match(content, @"(?:password|pwd|pass)\s+(.+)$", RegexOptions.IgnoreCase);
+                    if (match.Success)
+                    {
+                        string dataSection = match.Groups[1].Value.Trim();
+                        
+                        // Try splitting by single space first to see if we have exactly 3 parts
+                        var singleSpaceParts = dataSection.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (singleSpaceParts.Length >= 3)
+                        {
+                            // Take first as service, second as username, third as password
+                            string service = singleSpaceParts[0];
+                            string username = singleSpaceParts.Length > 1 ? singleSpaceParts[singleSpaceParts.Length - 2] : singleSpaceParts[1];
+                            string password = singleSpaceParts[singleSpaceParts.Length - 1];
+                            
+                            // If service has multiple words, combine them
+                            if (singleSpaceParts.Length > 3)
+                            {
+                                service = string.Join(" ", singleSpaceParts.Take(singleSpaceParts.Length - 2));
+                            }
+                            
+                            if (!string.IsNullOrWhiteSpace(username) && username.Length >= 2 && username.Length <= 150 &&
+                                !string.IsNullOrWhiteSpace(password) && password.Length >= 2 && password.Length <= 150)
+                            {
+                                credentials.Add(new CredentialEntry { 
+                                    Service = service, 
+                                    Username = username, 
+                                    Password = password, 
+                                    Url = "" 
+                                });
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Case 2: Multi-line table (header on first line, data on subsequent lines)
+                    for (int i = 1; i < lines.Length; i++)
+                    {
+                        string line = lines[i].Trim();
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        
+                        // Split by multiple spaces (2+) to separate columns
+                        var parts = Regex.Split(line, @"\s{2,}").Select(p => p.Trim()).Where(p => !string.IsNullOrEmpty(p)).ToArray();
+                        
+                        if (parts.Length >= 3)
+                        {
+                            string service = parts[0];
+                            string username = parts[1];
+                            string password = parts[2];
+                            
+                            if (!string.IsNullOrWhiteSpace(username) && username.Length >= 2 && username.Length <= 150 &&
+                                !string.IsNullOrWhiteSpace(password) && password.Length >= 2 && password.Length <= 150)
+                            {
+                                credentials.Add(new CredentialEntry { 
+                                    Service = service, 
+                                    Username = username, 
+                                    Password = password, 
+                                    Url = "" 
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                return credentials.Count > 0 ? credentials : null;
+            }
+            catch { return null; }
+        }
+
         private System.Collections.Generic.List<CredentialEntry> ExtractCredentialsFromXmlTags(string content)
         {
             var credentials = new System.Collections.Generic.List<CredentialEntry>();
@@ -306,17 +415,22 @@ namespace SnaffCore.Concurrency
                 var xmlPasswordPattern = new Regex(@"<([^>]*\.)?(?<tagname>(?:ftp|smtp|excel|mail|db|sql|ldap|ssh|sftp|navision|server|database|admin)[._-]?(?:password|pwd))[^>]*>\s*(?<password>[^<]{3,}?)\s*</", 
                     RegexOptions.IgnoreCase | RegexOptions.Multiline);
                 
+                var seenPasswords = new System.Collections.Generic.HashSet<string>();
+                
                 foreach (Match match in xmlPasswordPattern.Matches(content))
                 {
                     string password = match.Groups["password"].Value.Trim();
                     string tagName = match.Groups["tagname"].Value;
                     
-                    // Skip obvious placeholders
+                    // Skip obvious placeholders and duplicates
                     if (string.IsNullOrWhiteSpace(password) || 
                         password.Length < 3 || 
                         password.Length > 200 ||
-                        Regex.IsMatch(password, @"(?i)^(password|pwd|none|null|empty)$"))
+                        Regex.IsMatch(password, @"(?i)^(password|pwd|none|null|empty)$") ||
+                        seenPasswords.Contains(password))
                         continue;
+                    
+                    seenPasswords.Add(password);
                     
                     // Try to find username in nearby tags
                     string username = "";
@@ -417,6 +531,11 @@ namespace SnaffCore.Concurrency
         private string DetermineType(FileResult result)
         {
             string ruleName = result.MatchedRule?.RuleName?.ToLower() ?? "";
+            
+            // Check for password-protected file first
+            if (ruleName.Contains("passwordprotected") || ruleName == "passwordprotectedfile")
+                return "Password-Protected File";
+            
             if (ruleName.Contains("credential") || ruleName.Contains("password")) return "Credentials";
             if (ruleName.Contains("key") && ruleName.Contains("private")) return "Private Key";
             if (ruleName.Contains("config")) return "Config File";

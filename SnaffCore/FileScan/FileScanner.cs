@@ -14,6 +14,7 @@ namespace SnaffCore.FileScan
         {
             Mq = BlockingMq.GetMq();
         }
+        
         public void ScanFile(string file)
         {
             try
@@ -29,27 +30,29 @@ namespace SnaffCore.FileScan
                     };
                 }
             }
-            catch (FileNotFoundException e)
+            catch (FileNotFoundException)
             {
-                // If file was deleted by a separate application
-                //  or thread since the call to TraverseTree()
-                // then just continue.
-                Mq.Trace(e.ToString());
+                // File was deleted - silently skip
                 return;
             }
-            catch (UnauthorizedAccessException e)
+            catch (UnauthorizedAccessException)
             {
-                Mq.Trace(e.ToString());
+                // Access denied - silently skip
                 return;
             }
             catch (PathTooLongException)
             {
-                Mq.Trace(file + " path was too long for me to look at.");
+                Mq.Trace(file + " path was too long.");
+                return;
+            }
+            catch (IOException)
+            {
+                // Network or I/O error - silently skip
                 return;
             }
             catch (Exception e)
             {
-                Mq.Trace(e.ToString());
+                Mq.Trace($"Error scanning {file}: {e.Message}");
                 return;
             }
         }

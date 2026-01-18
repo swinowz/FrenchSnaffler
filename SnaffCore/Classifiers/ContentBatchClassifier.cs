@@ -198,77 +198,53 @@ namespace SnaffCore.Classifiers
             {
                 string ext = fileInfo.Extension.ToLower();
                 
-                // For .xlsx files, use ClosedXML (much faster than Toxy)
+                // For .xlsx files, use ClosedXML directly (no Task.Run to avoid thread pool starvation)
                 if (ext == ".xlsx" || ext == ".xlsm")
                 {
-                    var xlsxTask = System.Threading.Tasks.Task.Run(() =>
+                    try
                     {
-                        try
-                        {
-                            return ParseXlsxWithClosedXML(fileInfo.FullName);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[DEBUG-XLSX-FAIL] {fileInfo.Name}: {ex.Message}");
-                            return null;
-                        }
-                    });
-
-                    if (xlsxTask.Wait(TimeSpan.FromSeconds(10)))
-                    {
-                        string result = xlsxTask.Result;
+                        string result = ParseXlsxWithClosedXML(fileInfo.FullName);
                         if (result == "[PASSWORD_PROTECTED]")
                         {
-                            // Report password-protected file for manual investigation
                             ReportPasswordProtectedFile(fileInfo);
                             return "";
                         }
                         if (!string.IsNullOrEmpty(result))
                             return result;
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Console.WriteLine($"[DEBUG-XLSX-TIMEOUT] {fileInfo.Name}");
+                        // Silently handle - errors logged at trace level
+                        Mq.Trace($"XLSX parse failed for {fileInfo.Name}: {ex.Message}");
                     }
                     
                     // Fallback to text parser
                     return ParseWithTextParser(fileInfo);
                 }
                 
-                // For old .xls files, use Toxy SpreadsheetParser
+                // For old .xls files, use Toxy SpreadsheetParser directly
                 if (ext == ".xls" || ext == ".xlt" || ext == ".xltx" || ext == ".xltm")
                 {
-                    var xlsTask = System.Threading.Tasks.Task.Run(() =>
+                    try
                     {
-                        try
-                        {
-                            ParserContext context = new ParserContext(fileInfo.FullName);
-                            ISpreadsheetParser spreadsheetParser = ParserFactory.CreateSpreadsheet(context);
-                            ToxySpreadsheet spreadsheet = spreadsheetParser.Parse();
-                            return ConvertSpreadsheetToTabDelimited(spreadsheet);
-                        }
-                        catch (Exception ex)
-                        {
-                            // Check for password-protected .xls files
-                            string msg = ex.Message?.ToLower() ?? "";
-                            if (msg.Contains("encrypt") || msg.Contains("password") || msg.Contains("protected"))
-                            {
-                                return "[PASSWORD_PROTECTED]";
-                            }
-                            return null;
-                        }
-                    });
-
-                    if (xlsTask.Wait(TimeSpan.FromSeconds(10)))
+                        ParserContext context = new ParserContext(fileInfo.FullName);
+                        ISpreadsheetParser spreadsheetParser = ParserFactory.CreateSpreadsheet(context);
+                        ToxySpreadsheet spreadsheet = spreadsheetParser.Parse();
+                        string result = ConvertSpreadsheetToTabDelimited(spreadsheet);
+                        
+                        if (!string.IsNullOrEmpty(result) && result.Contains("\t"))
+                            return result;
+                    }
+                    catch (Exception ex)
                     {
-                        string result = xlsTask.Result;
-                        if (result == "[PASSWORD_PROTECTED]")
+                        // Only report as password-protected if error explicitly says so
+                        string msg = ex.Message?.ToLower() ?? "";
+                        if (msg.Contains("password") || msg.Contains("encrypted"))
                         {
                             ReportPasswordProtectedFile(fileInfo);
                             return "";
                         }
-                        if (!string.IsNullOrEmpty(result) && result.Contains("\t"))
-                            return result;
+                        Mq.Trace($"XLS parse failed for {fileInfo.Name}: {ex.Message}");
                     }
                     
                     // Fallback to text parser
@@ -289,19 +265,18 @@ namespace SnaffCore.Classifiers
         /// </summary>
         private void ReportPasswordProtectedFile(FileInfo fileInfo)
         {
-            // Create a synthetic rule for password-protected files
             var rule = new ClassifierRule
             {
                 RuleName = "PasswordProtectedFile",
                 EnumerationScope = EnumerationScope.FileEnumeration,
-                MatchAction = MatchAction.Relay,
+                MatchAction = MatchAction.Snaffle,
                 Triage = Triage.Yellow,
                 Description = "Password-protected document - may contain sensitive data"
             };
             
             var textResult = new TextResult
             {
-                MatchContext = "File is password-protected or encrypted - requires manual investigation"
+                MatchContext = "File is password-protected - requires manual investigation"
             };
             
             var fileResult = new FileResult(fileInfo)
@@ -320,8 +295,12 @@ namespace SnaffCore.Classifiers
         {
             var sb = new System.Text.StringBuilder();
             
+            // Suppress ClosedXML console errors ("Ran out of data before creating all the strings!")
+            var originalError = System.Console.Error;
             try
             {
+                System.Console.SetError(System.IO.TextWriter.Null);
+                
                 using (var workbook = new XLWorkbook(filePath))
                 {
                     foreach (var worksheet in workbook.Worksheets)
@@ -339,15 +318,22 @@ namespace SnaffCore.Classifiers
             }
             catch (Exception ex)
             {
-                // Check for password-protected or encrypted files
+                // Only report as password-protected if error explicitly mentions encryption
                 string msg = ex.Message?.ToLower() ?? "";
-                if (msg.Contains("encrypt") || msg.Contains("password") || msg.Contains("protected") || 
-                    msg.Contains("corrupt") || msg.Contains("invalid") || msg.Contains("zip"))
+                string exType = ex.GetType().Name.ToLower();
+                if (msg.Contains("password") || msg.Contains("encrypted") || msg.Contains("encryption") ||
+                    msg.Contains("not a zip") || msg.Contains("invalid zip") ||
+                    exType.Contains("zip") || exType.Contains("crypto"))
                 {
-                    // Return marker so we know it's password protected (not an error)
                     return "[PASSWORD_PROTECTED]";
                 }
-                throw; // Re-throw other exceptions
+                // Other errors (corrupt, invalid, etc.) - just skip silently
+                Mq.Trace($"XLSX parse error for {filePath}: {ex.Message}");
+                return "";
+            }
+            finally
+            {
+                System.Console.SetError(originalError);
             }
             
             return sb.ToString();
@@ -358,25 +344,29 @@ namespace SnaffCore.Classifiers
         /// </summary>
         private string ParseWithTextParser(FileInfo fileInfo)
         {
-            var textTask = System.Threading.Tasks.Task.Run(() =>
+            // REMOVED Task.Run to prevent thread pool starvation with large file queues
+            // Run synchronously - text parsing is fast enough (typically <100ms)
+            try
             {
-                try
-                {
-                    ParserContext context = new ParserContext(fileInfo.FullName);
-                    ITextParser parser = ParserFactory.CreateText(context);
-                    return parser.Parse() ?? "";
-                }
-                catch
-                {
-                    return "";
-                }
-            });
-
-            if (textTask.Wait(TimeSpan.FromSeconds(5)))
-            {
-                return textTask.Result ?? "";
+                ParserContext context = new ParserContext(fileInfo.FullName);
+                ITextParser parser = ParserFactory.CreateText(context);
+                string result = parser.Parse() ?? "";
+                return result;
             }
-            return "";
+            catch (Exception ex)
+            {
+                // Check if this is a password-protected file
+                string msg = ex.Message?.ToLower() ?? "";
+                string exType = ex.GetType().Name.ToLower();
+                if (msg.Contains("password") || msg.Contains("encrypted") || msg.Contains("encryption") ||
+                    msg.Contains("not a zip") || msg.Contains("invalid zip") ||
+                    exType.Contains("zip") || exType.Contains("crypto"))
+                {
+                    ReportPasswordProtectedFile(fileInfo);
+                }
+                Mq.Trace($"Text parse failed for {fileInfo.Name}: {ex.Message}");
+                return "";
+            }
         }
         
         /// <summary>

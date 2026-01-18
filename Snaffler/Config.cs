@@ -267,10 +267,22 @@ namespace ShareAuditor
                 {
                     parsedConfig.MaxThreads = maxThreadsArg.Value;
                 }
+                
+                // If no -x specified, default to 100 threads
+                if (parsedConfig.MaxThreads <= 0)
+                {
+                    parsedConfig.MaxThreads = 100;
+                }
 
-                parsedConfig.ShareThreads = parsedConfig.MaxThreads / 3;
-                parsedConfig.FileThreads = parsedConfig.MaxThreads / 3;
-                parsedConfig.TreeThreads = parsedConfig.MaxThreads / 3;
+                // Allocate more threads to FileScanner since that's the bottleneck
+                // Share: 10%, Tree: 20%, File: 70%
+                parsedConfig.ShareThreads = Math.Max(1, parsedConfig.MaxThreads / 10);
+                parsedConfig.TreeThreads = Math.Max(1, parsedConfig.MaxThreads / 5);
+                parsedConfig.FileThreads = parsedConfig.MaxThreads - parsedConfig.ShareThreads - parsedConfig.TreeThreads;
+                
+                // Increase .NET ThreadPool limits to handle high concurrency
+                System.Threading.ThreadPool.SetMinThreads(parsedConfig.MaxThreads, parsedConfig.MaxThreads);
+                System.Threading.ThreadPool.SetMaxThreads(parsedConfig.MaxThreads * 2, parsedConfig.MaxThreads * 2);
 
                 if (tsvArg.Parsed)
                 {
@@ -288,9 +300,12 @@ namespace ShareAuditor
                     Mq.Degub("Requested verbosity level: " + parsedConfig.LogLevelString);
                 }
 
-                // if enabled, display findings to the console
-                parsedConfig.LogToConsole = stdOutArg.Parsed;
-                Mq.Degub("Enabled logging to stdout.");
+                // Explicit console output flag
+                if (stdOutArg.Parsed)
+                {
+                    parsedConfig.LogToConsole = true;
+                    Mq.Degub("Console output enabled via -s flag.");
+                }
 
                 // args that tell us about targeting
                 if ((domainArg.Parsed) && (!String.IsNullOrEmpty(domainArg.Value)))
@@ -408,11 +423,18 @@ namespace ShareAuditor
                     }
                 }
 
+                // Default: If verbose mode is enabled but no output destination specified, use console
+                if (verboseArg.Parsed && !parsedConfig.LogToFile && !parsedConfig.LogToConsole)
+                {
+                    parsedConfig.LogToConsole = true;
+                    Mq.Info("Verbose mode enabled without output destination - defaulting to console.");
+                }
+
+                // Validation: Must have at least one output destination
                 if (!parsedConfig.LogToConsole && !parsedConfig.LogToFile)
                 {
-                    Mq.Error(
-                        "\nYou didn't enable output to file or to the console so you won't see any results or debugs or anything. Your l0ss.");
-                    throw new ArgumentException("Pointless argument combination.");
+                    Mq.Error("\nNo output destination specified. Use -s for console output or -o <file> for file output.");
+                    throw new ArgumentException("No output destination specified.");
                 }
 
                 if (parsedConfig.ClassifierRules.Count <= 0)

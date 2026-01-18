@@ -195,7 +195,7 @@ namespace ShareAuditor
 
                 //-------------------------------------------
 
-                // Initialize Excel report generator if -t auto is used
+                // Initialize CSV/Excel output if -t auto is used
                 if (Options.LogType == LogType.Auto)
                 {
                     string excelOutputPath = Options.LogFilePath;
@@ -208,8 +208,9 @@ namespace ShareAuditor
                     {
                         excelOutputPath = Path.ChangeExtension(excelOutputPath, ".xlsx");
                     }
-                    _excelReportGenerator = new ExcelReportGenerator(excelOutputPath, Mq);
-                    Mq.Info($"Excel report will be generated at: {excelOutputPath}");
+                    // Direct CSV streaming - bypasses memory accumulation
+                    Mq.InitCsvOutput(excelOutputPath);
+                    Mq.Info($"Direct CSV streaming enabled: {Path.ChangeExtension(excelOutputPath, ".csv")}");
                 }
 
                 if (Options.Snaffle && (Options.SnafflePath.Length > 4))
@@ -276,26 +277,19 @@ namespace ShareAuditor
                 }
                 else if (Options.LogType == LogType.Auto)
                 {
-                    // Process for Excel output - also log to console
+                    // CSV is written directly in BlockingMq.FileResult() - just log to console
                     ProcessMessage(message);
                     
-                    // Add file results to Excel report
-                    if (message.Type == SnafflerMessageType.FileResult && _excelReportGenerator != null)
-                    {
-                        _excelReportGenerator.AddFinding(message.FileResult);
-                    }
-                    
-                    // Generate Excel report on finish
-                    if (message.Type == SnafflerMessageType.Finish && _excelReportGenerator != null)
+                    // Finalize CSV on finish
+                    if (message.Type == SnafflerMessageType.Finish)
                     {
                         try
                         {
-                            _excelReportGenerator.Generate();
-                            Mq.Info("Excel report generated successfully.");
+                            Mq.FinalizeCsv();
                         }
                         catch (Exception ex)
                         {
-                            Mq.Error($"Failed to generate Excel report: {ex.Message}");
+                            Mq.Error($"Failed to finalize CSV: {ex.Message}");
                         }
                     }
                 }
@@ -493,9 +487,16 @@ namespace ShareAuditor
                 string matchcontext = "";
                 if (message.FileResult.TextResult != null)
                 {
-                    matchedstring = message.FileResult.TextResult.MatchedStrings[0];
-                    matchcontext = message.FileResult.TextResult.MatchContext;
-                    matchcontext = Regex.Replace(matchcontext, @"\r\n?|\n", "\\n"); // Replace newlines with \n for consistent log lines
+                    // Handle null MatchedStrings (content freed for memory savings)
+                    if (message.FileResult.TextResult.MatchedStrings != null && message.FileResult.TextResult.MatchedStrings.Count > 0)
+                    {
+                        matchedstring = message.FileResult.TextResult.MatchedStrings[0] ?? "";
+                    }
+                    matchcontext = message.FileResult.TextResult.MatchContext ?? "";
+                    if (!string.IsNullOrEmpty(matchcontext))
+                    {
+                        matchcontext = Regex.Replace(matchcontext, @"\r\n?|\n", "\\n");
+                    }
                 }
 
                 return string.Format(fileResultTemplate, triageString, matchedclassifier, canread, canwrite, canmodify, matchedstring, fileSizeString, modifiedStamp,

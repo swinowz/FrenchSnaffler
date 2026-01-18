@@ -124,7 +124,6 @@ namespace SnaffCore.Concurrency
                 string dateFound = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                 
                 System.Collections.Generic.List<CredentialEntry> allCreds = null;
-                (string Username, string Password) singleCred = (null, null);
                 string preview = "";
                 bool hasTextResult = false;
                 
@@ -142,9 +141,15 @@ namespace SnaffCore.Concurrency
                         allCreds = ExtractCredentialsFromXmlTags(content);
                     }
                     
+                    // If no XML credentials, try regex extraction (now also returns list)
                     if (allCreds == null || allCreds.Count == 0)
                     {
-                        singleCred = ExtractCredentialsRegex(content);
+                        allCreds = ExtractCredentialsRegex(content);
+                    }
+                    
+                    // If still no credentials, just show preview
+                    if (allCreds == null || allCreds.Count == 0)
+                    {
                         preview = EscapeCsv(GetPreview(content, 100));
                     }
                 }
@@ -166,7 +171,12 @@ namespace SnaffCore.Concurrency
                                 {
                                     string credPreview = !string.IsNullOrEmpty(cred.Service) 
                                         ? cred.Service + (!string.IsNullOrEmpty(cred.Url) ? $" ({cred.Url})" : "")
-                                        : (!string.IsNullOrEmpty(cred.Url) ? cred.Url : "Credential from table");
+                                        : (!string.IsNullOrEmpty(cred.Url) ? cred.Url : "");
+                                    
+                                    if (string.IsNullOrEmpty(credPreview))
+                                    {
+                                        credPreview = preview; // Use file preview if no credential context
+                                    }
                                     
                                     _csvWriter.WriteLine($"{severity},{type},{filePath},{ruleName},{EscapeCsv(cred.Username)},{EscapeCsv(cred.Password)},{dateFound},{EscapeCsv(credPreview)}");
                                     _findingsCount++;
@@ -174,7 +184,8 @@ namespace SnaffCore.Concurrency
                             }
                             else
                             {
-                                _csvWriter.WriteLine($"{severity},{type},{filePath},{ruleName},{EscapeCsv(singleCred.Username ?? "")},{EscapeCsv(singleCred.Password ?? "")},{dateFound},{preview}");
+                                // No credentials found - just show the file with preview
+                                _csvWriter.WriteLine($"{severity},{type},{filePath},{ruleName},,,{dateFound},{preview}");
                                 _findingsCount++;
                             }
                         }
@@ -312,7 +323,9 @@ namespace SnaffCore.Concurrency
                     int matchPos = match.Index;
                     
                     // Look for username/login/user tags within 500 chars before this password tag
-                    string contextBefore = content.Substring(Math.Max(0, matchPos - 500), Math.Min(500, matchPos));
+                    int contextStart = Math.Max(0, matchPos - 500);
+                    int contextLength = matchPos - contextStart;
+                    string contextBefore = content.Substring(contextStart, contextLength);
                     var userPattern = new Regex(@"<([^>]*\.)?(?:username|login|user|userid|user[._-]?id)[^>]*>\s*([^<]{2,}?)\s*</", 
                         RegexOptions.IgnoreCase);
                     var userMatches = userPattern.Matches(contextBefore);
@@ -335,28 +348,70 @@ namespace SnaffCore.Concurrency
             catch { return null; }
         }
         
-        private (string Username, string Password) ExtractCredentialsRegex(string content)
+        private System.Collections.Generic.List<CredentialEntry> ExtractCredentialsRegex(string content)
         {
-            string username = null, password = null;
+            var credentials = new System.Collections.Generic.List<CredentialEntry>();
             try
             {
-                var emailMatch = Regex.Match(content, @"[\w\.-]+@[\w\.-]+\.\w+");
-                if (emailMatch.Success) username = emailMatch.Value;
-
-                if (string.IsNullOrEmpty(username))
+                // Safety check - don't process very large content
+                if (string.IsNullOrEmpty(content) || content.Length > 500000) 
+                    return null;
+                
+                // Find all passwords first (can be multiple)
+                var seenPasswords = new System.Collections.Generic.HashSet<string>();
+                var pwdPattern = new Regex(@"(?i)(password|pwd|mdp|mot.?de.?passe)[\s:=\t""']+([^\s\t\n\r""']{4,50})", RegexOptions.None, TimeSpan.FromMilliseconds(1000));
+                
+                foreach (Match pwdMatch in pwdPattern.Matches(content))
                 {
-                    var userMatch = Regex.Match(content, @"(?i)(user|username|login|identifiant|utilisateur)[\s:=\t]+([^\s\t\n\r]{3,50})");
-                    if (userMatch.Success && userMatch.Groups.Count > 2) username = userMatch.Groups[2].Value.Trim();
+                    if (pwdMatch.Groups.Count > 2)
+                    {
+                        string password = pwdMatch.Groups[2].Value.Trim().TrimEnd(',', ';', ')', '}', ']', '"', '\'');
+                        
+                        // Skip placeholders and duplicates
+                        if (string.IsNullOrWhiteSpace(password) || password.Length < 4 || password.Length > 100 ||
+                            Regex.IsMatch(password, @"(?i)^(password|pwd|mdp|none|null|empty|\*+|x+)$") ||
+                            seenPasswords.Contains(password))
+                            continue;
+                        
+                        seenPasswords.Add(password);
+                        
+                        // Try to find username near this password (within 200 chars before)
+                        string username = "";
+                        int matchPos = pwdMatch.Index;
+                        int contextStart = Math.Max(0, matchPos - 200);
+                        int contextLength = matchPos - contextStart;
+                        string contextBefore = content.Substring(contextStart, contextLength);
+                        
+                        // Try email first
+                        var emailMatch = Regex.Match(contextBefore, @"[\w\.-]+@[\w\.-]+\.\w+");
+                        if (emailMatch.Success)
+                        {
+                            username = emailMatch.Value;
+                        }
+                        else
+                        {
+                            // Try username pattern
+                            var userPattern = new Regex(@"(?i)(user|username|login|identifiant|utilisateur|user\s*id)[\s:=\t]+([^\s\t\n\r""']{3,50})");
+                            var userMatches = userPattern.Matches(contextBefore);
+                            if (userMatches.Count > 0)
+                            {
+                                username = userMatches[userMatches.Count - 1].Groups[2].Value.Trim();
+                            }
+                        }
+                        
+                        credentials.Add(new CredentialEntry
+                        {
+                            Username = username,
+                            Password = password,
+                            Service = "",
+                            Url = ""
+                        });
+                    }
                 }
-
-                var pwdMatch = Regex.Match(content, @"(?i)(password|pwd|mdp|mot.?de.?passe)[\s:=\t""']+([^\s\t\n\r""']{4,50})");
-                if (pwdMatch.Success && pwdMatch.Groups.Count > 2)
-                {
-                    password = pwdMatch.Groups[2].Value.Trim().TrimEnd(',', ';', ')', '}', ']', '"', '\'');
-                }
+                
+                return credentials.Count > 0 ? credentials : null;
             }
-            catch { }
-            return (username, password);
+            catch { return null; }
         }
         
         private string DetermineType(FileResult result)

@@ -11,7 +11,7 @@
     <DefineConstants>$(DefineConstants);ULTRASNAFFLER</DefineConstants>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <OutputPath>..\release\</OutputPath>
-    <PublishSingleFile>true</PublishSingleFile>
+    <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>

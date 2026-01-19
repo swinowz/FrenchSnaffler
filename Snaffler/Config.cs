@@ -104,12 +104,14 @@ namespace ShareAuditor
             ValueArgument<string> compTargetArg = new ValueArgument<string>('n', "comptarget", "List of computers in a file(e.g C:\targets.txt), a single Computer (or comma separated list) to target.");
             ValueArgument<string> ruleDirArg = new ValueArgument<string>('p', "rulespath", "Path to a directory full of toml-formatted rules. ShareAuditor will load all of these in place of the default ruleset.");
             ValueArgument<string> logType = new ValueArgument<string>('t', "logtype", "Type of log you would like to output. Currently supported options are plain and JSON. Defaults to plain.");
+            ValueArgument<string> testFileArg = new ValueArgument<string>('w', "testfile", "Test credential extraction methods on a specific file. Outputs method results to console only.");
             ValueArgument<string> timeOutArg = new ValueArgument<string>('e', "timeout",
                 "Interval between status updates (in minutes) also acts as a timeout for AD data to be gathered via LDAP. Turn this knob up if you aren't getting any computers from AD when you run ShareAuditor through a proxy or other slow link. Default = 5");
-            // list of letters i haven't used yet: gnqw
+            // list of letters i haven't used yet: gnq
 
             CommandLineParser.CommandLineParser parser = new CommandLineParser.CommandLineParser();
             parser.Arguments.Add(timeOutArg);
+            parser.Arguments.Add(testFileArg);
             parser.Arguments.Add(configFileArg);
             parser.Arguments.Add(outFileArg);
             parser.Arguments.Add(helpArg);
@@ -149,6 +151,13 @@ namespace ShareAuditor
             try
             {
                 parser.ParseCommandLine(args);
+
+                // Test mode - extract credentials from single file and show methods
+                if (testFileArg.Parsed && !String.IsNullOrWhiteSpace(testFileArg.Value))
+                {
+                    TestCredentialExtraction(testFileArg.Value);
+                    return null; // Exit after test
+                }
 
                 if (timeOutArg.Parsed && !String.IsNullOrWhiteSpace(timeOutArg.Value))
                 {
@@ -587,7 +596,326 @@ namespace ShareAuditor
             return parsedConfig;
         }
 
+        private static void TestCredentialExtraction(string filePath)
+        {
+            Console.WriteLine("====================================");
+            Console.WriteLine("CREDENTIAL EXTRACTION TEST MODE");
+            Console.WriteLine("====================================");
+            Console.WriteLine($"File: {filePath}\n");
 
+            if (!File.Exists(filePath))
+            {
+                Console.WriteLine($"ERROR: File not found: {filePath}");
+                return;
+            }
 
+            // Read file content using appropriate parser
+            string content = "";
+            try
+            {
+                if (filePath.EndsWith(".xls", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Use Toxy for XLS files
+                    var context = new Toxy.ParserContext(filePath);
+                    var parser = Toxy.ParserFactory.CreateText(context);
+                    content = parser.Parse() ?? "";
+                    Console.WriteLine($"Content parsed via Toxy (XLS): {content.Length} chars\n");
+                }
+                else if (filePath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Use ClosedXML for XLSX files
+                    try
+                    {
+                        using (var workbook = new ClosedXML.Excel.XLWorkbook(filePath))
+                        {
+                            var sb = new StringBuilder();
+                            foreach (var worksheet in workbook.Worksheets)
+                            {
+                                foreach (var row in worksheet.RowsUsed())
+                                {
+                                    foreach (var cell in row.CellsUsed())
+                                    {
+                                        sb.Append(cell.Value.ToString());
+                                        sb.Append("\t");
+                                    }
+                                    sb.AppendLine();
+                                }
+                            }
+                            content = sb.ToString();
+                        }
+                        Console.WriteLine($"Content parsed via ClosedXML (XLSX): {content.Length} chars\n");
+                    }
+                    catch
+                    {
+                        Console.WriteLine("XLSX file may be encrypted/password-protected\n");
+                        return;
+                    }
+                }
+                else
+                {
+                    content = File.ReadAllText(filePath, Encoding.Default);
+                    Console.WriteLine($"Content read as text: {content.Length} chars\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR reading file: {ex.Message}\n");
+                return;
+            }
+
+            Console.WriteLine("Content preview (first 500 chars):");
+            string preview = content.Length > 500 ? content.Substring(0, 500) : content;
+            // Replace non-printable chars
+            preview = System.Text.RegularExpressions.Regex.Replace(preview, @"[^\x20-\x7E\t\n\r]", ".");
+            Console.WriteLine(preview);
+            Console.WriteLine();
+
+            // Test extraction methods
+            Console.WriteLine("Testing extraction methods:\n");
+
+            // Method 1: Table extraction (tab-delimited)
+            Console.WriteLine("1. TABLE EXTRACTION (Tab-delimited):");
+            TestTableExtraction(content, useSimpleTable: false);
+
+            // Method 2: Simple table extraction
+            Console.WriteLine("\n2. SIMPLE TABLE EXTRACTION:");
+            TestTableExtraction(content, useSimpleTable: true);
+
+            // Method 3: XML tag extraction
+            Console.WriteLine("\n3. XML TAG EXTRACTION:");
+            TestXmlExtraction(content);
+
+            // Method 4: Regex extraction
+            Console.WriteLine("\n4. REGEX EXTRACTION:");
+            TestRegexExtraction(content);
+            
+            // Method 5: Direct test of single-line extraction
+            Console.WriteLine("\n5. SINGLE-LINE EXTRACTION TEST:");
+            TestSingleLineExtraction(content);
+
+            Console.WriteLine("\n====================================");
+            Console.WriteLine("TEST COMPLETE");
+            Console.WriteLine("====================================");
+        }
+
+        private static void TestSingleLineExtraction(string content)
+        {
+            try
+            {
+                // Simulate what ExtractFromSimpleTable does for single-line content
+                var match = System.Text.RegularExpressions.Regex.Match(content, @"(?:password|pwd|pass)\s+(.+)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (match.Success)
+                {
+                    string dataSection = match.Groups[1].Value.Trim();
+                    Console.WriteLine($"   Captured after 'password': {dataSection}");
+                    
+                    // Split by BOTH space and tab
+                    var parts = dataSection.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    Console.WriteLine($"   Parts count: {parts.Length}");
+                    Console.WriteLine($"   Parts: [{string.Join("], [", parts)}]");
+                    
+                    if (parts.Length >= 3)
+                    {
+                        string service = string.Join(" ", parts.Take(parts.Length - 2));
+                        string username = parts[parts.Length - 2];
+                        string password = parts[parts.Length - 1];
+                        
+                        Console.WriteLine($"   EXTRACTED:");
+                        Console.WriteLine($"     Service:  {service}");
+                        Console.WriteLine($"     Username: {username}");
+                        Console.WriteLine($"     Password: {password}");
+                        Console.WriteLine("   RESULT: ✓ Would extract credentials");
+                    }
+                    else
+                    {
+                        Console.WriteLine("   RESULT: ✗ Not enough parts after splitting");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("   RESULT: ✗ No password keyword match");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   RESULT: ERROR - {ex.Message}");
+            }
+        }
+
+        private static void TestTableExtraction(string content, bool useSimpleTable)
+        {
+            try
+            {
+                bool hasTab = content.Contains("\t");
+                bool hasNewline = content.Contains("\n");
+                Console.WriteLine($"   Has tabs: {hasTab}");
+                Console.WriteLine($"   Has newlines: {hasNewline}");
+
+                if (!hasNewline)
+                {
+                    Console.WriteLine("   RESULT: SKIPPED (no newlines)");
+                    return;
+                }
+
+                string[] lines = content.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                Console.WriteLine($"   Lines: {lines.Length}");
+
+                if (useSimpleTable)
+                {
+                    if (!hasTab && lines.Length >= 1 && lines.Length <= 3)
+                    {
+                        Console.WriteLine("   Attempting simple table extraction...");
+                        Console.WriteLine($"   Line 1: {lines[0]}");
+                        
+                        // Simulate simple table extraction logic
+                        bool hasUserKeyword = System.Text.RegularExpressions.Regex.IsMatch(string.Join(" ", lines).ToLower(), @"(username|user)");
+                        bool hasPassKeyword = System.Text.RegularExpressions.Regex.IsMatch(string.Join(" ", lines).ToLower(), @"(password|pwd|pass)");
+                        
+                        Console.WriteLine($"   Has username keyword: {hasUserKeyword}");
+                        Console.WriteLine($"   Has password keyword: {hasPassKeyword}");
+                        
+                        if (hasUserKeyword && hasPassKeyword)
+                        {
+                            Console.WriteLine("   RESULT: ✓ Keywords found - would attempt extraction");
+                        }
+                        else
+                        {
+                            Console.WriteLine("   RESULT: ✗ Missing keywords");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   RESULT: SKIPPED (has tabs or wrong line count)");
+                    }
+                }
+                else
+                {
+                    if (!hasTab)
+                    {
+                        Console.WriteLine("   RESULT: SKIPPED (no tabs)");
+                    }
+                    else
+                    {
+                        Console.WriteLine("   Attempting tab-delimited extraction...");
+                        
+                        // Find header row
+                        int headerIndex = -1;
+                        string[] headers = null;
+                        for (int i = 0; i < Math.Min(lines.Length, 10); i++)
+                        {
+                            string[] potentialHeaders = lines[i].Split('\t');
+                            Console.WriteLine($"   Line {i}: [{string.Join("], [", potentialHeaders)}]");
+                            
+                            bool hasUserKeyword = potentialHeaders.Any(h => 
+                                System.Text.RegularExpressions.Regex.IsMatch(h ?? "", @"(?i)(identifiant|login|username|utilisateur|user|compte|email|admin)"));
+                            bool hasPassKeyword = potentialHeaders.Any(h => 
+                                System.Text.RegularExpressions.Regex.IsMatch(h ?? "", @"(?i)(mdp|password|pwd|mot.*passe|pass)"));
+                            
+                            if (hasUserKeyword && hasPassKeyword) 
+                            { 
+                                headerIndex = i; 
+                                headers = potentialHeaders; 
+                                Console.WriteLine($"   HEADER FOUND at line {i}");
+                                break; 
+                            }
+                        }
+                        
+                        if (headerIndex == -1)
+                        {
+                            Console.WriteLine("   RESULT: ✗ No header row with both username and password keywords");
+                            return;
+                        }
+                        
+                        // Find column indices
+                        int userColIndex = -1, passColIndex = -1, serviceColIndex = -1;
+                        for (int i = 0; i < headers.Length; i++)
+                        {
+                            string header = headers[i]?.Trim()?.ToLower() ?? "";
+                            if (userColIndex == -1 && System.Text.RegularExpressions.Regex.IsMatch(header, @"(identifiant|login|username|utilisateur|user|compte|email|admin)")) userColIndex = i;
+                            if (passColIndex == -1 && System.Text.RegularExpressions.Regex.IsMatch(header, @"(mdp|password|pwd|mot.*passe|pass)")) passColIndex = i;
+                            if (serviceColIndex == -1 && System.Text.RegularExpressions.Regex.IsMatch(header, @"(nom|name|service|site|fournisseur|type)")) serviceColIndex = i;
+                        }
+                        
+                        Console.WriteLine($"   Column indices: service={serviceColIndex}, user={userColIndex}, pass={passColIndex}");
+                        
+                        if (userColIndex == -1 || passColIndex == -1)
+                        {
+                            Console.WriteLine("   RESULT: ✗ Could not find username or password column");
+                            return;
+                        }
+                        
+                        // Extract from data rows
+                        int extracted = 0;
+                        for (int i = headerIndex + 1; i < lines.Length; i++)
+                        {
+                            string[] cells = lines[i].Split('\t');
+                            Console.WriteLine($"   Data row {i}: [{string.Join("], [", cells)}]");
+                            
+                            int maxCol = Math.Max(userColIndex, passColIndex);
+                            if (cells.Length > maxCol)
+                            {
+                                string user = cells[userColIndex]?.Trim() ?? "";
+                                string pass = cells[passColIndex]?.Trim() ?? "";
+                                string service = serviceColIndex >= 0 && cells.Length > serviceColIndex ? cells[serviceColIndex]?.Trim() ?? "" : "";
+                                
+                                Console.WriteLine($"   EXTRACTED: Service=[{service}], User=[{user}], Pass=[{pass}]");
+                                extracted++;
+                            }
+                        }
+                        
+                        Console.WriteLine($"   RESULT: ✓ Extracted {extracted} credential(s)");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   RESULT: ERROR - {ex.Message}");
+            }
+        }
+
+        private static void TestXmlExtraction(string content)
+        {
+            try
+            {
+                var pattern = new System.Text.RegularExpressions.Regex(@"<([^>]*\.)?(?<tagname>(?:ftp|smtp|excel|mail|db|sql|ldap|ssh|sftp)[._-]?(?:password|pwd))[^>]*>\s*(?<password>[^<]{3,}?)\s*</", 
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                var matches = pattern.Matches(content);
+                Console.WriteLine($"   XML password tags found: {matches.Count}");
+                if (matches.Count > 0)
+                {
+                    Console.WriteLine("   RESULT: ✓ Would extract XML credentials");
+                }
+                else
+                {
+                    Console.WriteLine("   RESULT: ✗ No XML tags found");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   RESULT: ERROR - {ex.Message}");
+            }
+        }
+
+        private static void TestRegexExtraction(string content)
+        {
+            try
+            {
+                var pwdPattern = new System.Text.RegularExpressions.Regex(@"(?i)(password|pwd|mdp|mot.?de.?passe)[\s:=\t""']+([^\s\t\n\r""']{4,50})");
+                var matches = pwdPattern.Matches(content);
+                Console.WriteLine($"   Password patterns found: {matches.Count}");
+                if (matches.Count > 0)
+                {
+                    Console.WriteLine("   RESULT: ✓ Would extract via regex");
+                }
+                else
+                {
+                    Console.WriteLine("   RESULT: ✗ No regex matches");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   RESULT: ERROR - {ex.Message}");
+            }
+        }
     }
 }

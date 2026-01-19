@@ -294,8 +294,9 @@ namespace SnaffCore.Concurrency
                         string url = urlColIndex >= 0 && cells.Length > urlColIndex ? cells[urlColIndex]?.Trim() ?? "" : "";
 
                         // Filter out obvious non-credentials (procedural text, instructions, etc.)
-                        bool isProcedural = Regex.IsMatch(user + " " + pass, @"(?i)(cliquer|click|ouvrir|open|aller|go|voir|see|faire|do|exporter|export|enregistrer|save|vérifier|verify|passer|pass|intégrer|integrate)");
-                        bool isGeneric = Regex.IsMatch(user + " " + pass, @"(?i)(formulaire|form|numéro|number|fichier|file|données|data|valeur|value|ligne|line|cellule|cell)");
+                        // Use word boundaries to avoid false positives like "FtpPass2024"
+                        bool isProcedural = Regex.IsMatch(user + " " + pass, @"(?i)\b(cliquer|click|ouvrir|open|aller\s+à|voir|see|faire|exporter|export|enregistrer|save|vérifier|verify|intégrer|integrate)\b");
+                        bool isGeneric = Regex.IsMatch(user + " " + pass, @"(?i)\b(formulaire|form|numéro|number|fichier|file|données|data|valeur|value|ligne|line|cellule|cell)\b");
                         
                         bool validUser = !string.IsNullOrWhiteSpace(user) && user.Length >= 2 && user.Length <= 150 &&
                             !Regex.IsMatch(user, @"(?i)^(identifiant|login|username|utilisateur|user|compte)$") &&

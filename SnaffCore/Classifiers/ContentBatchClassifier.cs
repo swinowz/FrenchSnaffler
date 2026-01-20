@@ -265,6 +265,20 @@ namespace SnaffCore.Classifiers
         /// </summary>
         private void ReportPasswordProtectedFile(FileInfo fileInfo)
         {
+            // Skip empty files - they're not password-protected, just empty/corrupt
+            if (fileInfo.Length == 0)
+            {
+                Mq.Trace($"Skipping empty file {fileInfo.Name} - not password-protected");
+                return;
+            }
+            
+            // Skip Office lock/owner files (start with ~$) - these are temp files, not real documents
+            if (fileInfo.Name.StartsWith("~$"))
+            {
+                Mq.Trace($"Skipping Office lock file {fileInfo.Name} - not password-protected");
+                return;
+            }
+            
             var rule = new ClassifierRule
             {
                 RuleName = "PasswordProtectedFile",
@@ -295,12 +309,8 @@ namespace SnaffCore.Classifiers
         {
             var sb = new System.Text.StringBuilder();
             
-            // Suppress ClosedXML console errors ("Ran out of data before creating all the strings!")
-            var originalError = System.Console.Error;
             try
             {
-                System.Console.SetError(System.IO.TextWriter.Null);
-                
                 using (var workbook = new XLWorkbook(filePath))
                 {
                     foreach (var worksheet in workbook.Worksheets)
@@ -330,10 +340,6 @@ namespace SnaffCore.Classifiers
                 // Other errors (corrupt, invalid, etc.) - just skip silently
                 Mq.Trace($"XLSX parse error for {filePath}: {ex.Message}");
                 return "";
-            }
-            finally
-            {
-                System.Console.SetError(originalError);
             }
             
             return sb.ToString();

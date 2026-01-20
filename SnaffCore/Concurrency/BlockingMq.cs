@@ -48,7 +48,7 @@ namespace SnaffCore.Concurrency
         {
             _csvPath = Path.ChangeExtension(outputPath, ".csv");
             _csvWriter = new StreamWriter(_csvPath, false, Encoding.UTF8, 65536);
-            _csvWriter.WriteLine("Severity,Type,FilePath,RuleName,Username,Password,DateFound,Preview");
+            _csvWriter.WriteLine("Severity|Type|FilePath|RuleName|Username|Password|DateFound|Preview");
         }
 
         // Message Queue - bounded to prevent memory explosion
@@ -178,20 +178,20 @@ namespace SnaffCore.Concurrency
                                         credPreview = preview; // Use file preview if no credential context
                                     }
                                     
-                                    _csvWriter.WriteLine($"{severity},{type},{filePath},{ruleName},{EscapeCsv(cred.Username)},{EscapeCsv(cred.Password)},{dateFound},{EscapeCsv(credPreview)}");
+                                    _csvWriter.WriteLine($"{severity}|{type}|{filePath}|{ruleName}|{EscapeCsv(cred.Username)}|{EscapeCsv(cred.Password)}|{dateFound}|{EscapeCsv(credPreview)}");
                                     _findingsCount++;
                                 }
                             }
                             else
                             {
                                 // No credentials found - just show the file with preview
-                                _csvWriter.WriteLine($"{severity},{type},{filePath},{ruleName},,,{dateFound},{preview}");
+                                _csvWriter.WriteLine($"{severity}|{type}|{filePath}|{ruleName}|||{dateFound}|{preview}");
                                 _findingsCount++;
                             }
                         }
                         else
                         {
-                            _csvWriter.WriteLine($"{severity},{type},{filePath},{ruleName},,,{dateFound},{preview}");
+                            _csvWriter.WriteLine($"{severity}|{type}|{filePath}|{ruleName}|||{dateFound}|{preview}");
                             _findingsCount++;
                         }
                         
@@ -553,9 +553,9 @@ namespace SnaffCore.Concurrency
         private string EscapeCsv(string value)
         {
             if (string.IsNullOrEmpty(value)) return "";
-            if (value.Contains(",") || value.Contains(";") || value.Contains("\"") || value.Contains("\n") || value.Contains("\r"))
-                return $"\"{value.Replace("\"", "\"\"")}\"";
-            return value;
+            // Replace pipe with similar character to avoid breaking delimiter
+            // Also remove newlines and tabs that break the format
+            return value.Replace("|", "¦").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
         }
         
         public void FinalizeCsv()

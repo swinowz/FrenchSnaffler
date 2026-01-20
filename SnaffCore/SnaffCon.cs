@@ -226,7 +226,7 @@ namespace SnaffCore
                     break;
                 }
                 
-                Thread.Sleep(60000); // Check every 60 seconds
+                Thread.Sleep(20000); // Check every 20 seconds
             }
 
             StatusUpdate();

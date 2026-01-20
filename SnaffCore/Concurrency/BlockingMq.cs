@@ -18,6 +18,9 @@ namespace SnaffCore.Concurrency
         private string _csvPath;
         private int _findingsCount = 0;
         private int _filesProcessed = 0;
+        
+        // Track written credentials to avoid duplicates
+        private System.Collections.Generic.HashSet<string> _writtenCredentials = new System.Collections.Generic.HashSet<string>();
 
         /// <summary>
         /// Public method for FileScanner to trigger GC every 100 files
@@ -48,7 +51,7 @@ namespace SnaffCore.Concurrency
         {
             _csvPath = Path.ChangeExtension(outputPath, ".csv");
             _csvWriter = new StreamWriter(_csvPath, false, Encoding.UTF8, 65536);
-            _csvWriter.WriteLine("Severity|Type|FilePath|RuleName|Username|Password|DateFound|Preview");
+            _csvWriter.WriteLine("Severity\tType\tFilePath\tRuleName\tUsername\tPassword\tDateFound\tPreview");
         }
 
         // Message Queue - bounded to prevent memory explosion
@@ -167,8 +170,21 @@ namespace SnaffCore.Concurrency
                         {
                             if (allCreds != null && allCreds.Count > 0)
                             {
+                                // Change type to "Credentials" and severity to "Red" when we actually have extracted credentials
+                                string credType = "Credentials";
+                                string credSeverity = "Red";  // Always Red for extracted credentials
+                                
                                 foreach (var cred in allCreds)
                                 {
+                                    // Create unique key for deduplication: FilePath + Username + Password
+                                    string credKey = $"{filePath}|{cred.Username}|{cred.Password}";
+                                    
+                                    // Skip if already written
+                                    if (_writtenCredentials.Contains(credKey))
+                                    {
+                                        continue;
+                                    }
+                                    
                                     string credPreview = !string.IsNullOrEmpty(cred.Service) 
                                         ? cred.Service + (!string.IsNullOrEmpty(cred.Url) ? $" ({cred.Url})" : "")
                                         : (!string.IsNullOrEmpty(cred.Url) ? cred.Url : "");
@@ -178,20 +194,24 @@ namespace SnaffCore.Concurrency
                                         credPreview = preview; // Use file preview if no credential context
                                     }
                                     
-                                    _csvWriter.WriteLine($"{severity}|{type}|{filePath}|{ruleName}|{EscapeCsv(cred.Username)}|{EscapeCsv(cred.Password)}|{dateFound}|{EscapeCsv(credPreview)}");
+                                    _csvWriter.WriteLine($"{credSeverity}\t{credType}\t{filePath}\t{ruleName}\t{EscapeCsv(cred.Username)}\t{EscapeCsv(cred.Password)}\t{dateFound}\t{EscapeCsv(credPreview)}");
+                                    _writtenCredentials.Add(credKey);
                                     _findingsCount++;
                                 }
                             }
                             else
                             {
-                                // No credentials found - just show the file with preview
-                                _csvWriter.WriteLine($"{severity}|{type}|{filePath}|{ruleName}|||{dateFound}|{preview}");
+                                // No credentials found - downgrade Red to Yellow for sensitive files without actual credentials
+                                string adjustedSeverity = severity == "Red" ? "Yellow" : severity;
+                                _csvWriter.WriteLine($"{adjustedSeverity}\t{type}\t{filePath}\t{ruleName}\t\t\t{dateFound}\t{preview}");
                                 _findingsCount++;
                             }
                         }
                         else
                         {
-                            _csvWriter.WriteLine($"{severity}|{type}|{filePath}|{ruleName}|||{dateFound}|{preview}");
+                            // No text content - downgrade Red to Yellow
+                            string adjustedSeverity = severity == "Red" ? "Yellow" : severity;
+                            _csvWriter.WriteLine($"{adjustedSeverity}\t{type}\t{filePath}\t{ruleName}\t\t\t{dateFound}\t{preview}");
                             _findingsCount++;
                         }
                         
@@ -220,6 +240,71 @@ namespace SnaffCore.Concurrency
             public string Username { get; set; }
             public string Password { get; set; }
             public string Url { get; set; }
+        }
+        
+        /// <summary>
+        /// Decode HTML entities in passwords (e.g., &quot; to ")
+        /// </summary>
+        private string DecodeHtmlEntities(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            return text
+                .Replace("&quot;", "\"")
+                .Replace("&quot", "\"")  // Handle truncated entity
+                .Replace("&amp;", "&")
+                .Replace("&amp", "&")
+                .Replace("&lt;", "<")
+                .Replace("&gt;", ">")
+                .Replace("&apos;", "'")
+                .Replace("&#39;", "'")
+                .Trim('"', '\'', ' ');  // Clean up quotes
+        }
+        
+        /// <summary>
+        /// Check if text looks like a variable reference or common French word (not a real password)
+        /// </summary>
+        private bool IsVariableReference(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return true;
+            
+            // Very short codes (less than 4 chars, likely not real passwords)
+            if (text.Length < 4 && Regex.IsMatch(text, @"^[A-Z0-9]+$", RegexOptions.IgnoreCase)) return true;
+            
+            // HTML/PHP/XML tags
+            if ((text.StartsWith("<") || text.StartsWith(">")) && (text.EndsWith(">") || text.Contains("script") || text.Contains("param"))) return true;
+            
+            // PowerShell/PHP variables
+            if (text.StartsWith("$") || text.Contains("$_") || text.Contains("$.")) return true;
+            
+            // Function calls and common PHP functions
+            if (text.Contains("(") && text.Contains(")")) return true;
+            if (Regex.IsMatch(text, @"(?i)^(substr|strlen|trim|echo|print|array|count|explode|implode|str_replace)")) return true;
+            
+            // md5/hash references
+            if (Regex.IsMatch(text, @"(?i)\b(md5|sha|hash|crypt|encrypt)\b")) return true;
+            
+            // Object property access or code references (variable names, not values)
+            if (text.Contains("->") || text.Contains(".CommandText") || text.Contains(".Context.")) return true;
+            
+            // Code property names that end with Password (the property itself, not the value)
+            if (Regex.IsMatch(text, @"(?i)^_?configplugin\.|^common\.|^reportgenerator\.|^deliveryslip\.|^billgms\.|^website\.|^options\.")) return true;
+            
+            // Generic placeholders
+            if (Regex.IsMatch(text, @"(?i)^(password|pwd|pass|user|username|login)$")) return true;
+            
+            // C# string.Format placeholders {0}, {1}, {2}, etc.
+            if (Regex.IsMatch(text, @"^\{[0-9]+\}")) return true;
+            
+            // XML documentation tags - more comprehensive
+            if (Regex.IsMatch(text, @"^[<>].*param[>]?$", RegexOptions.IgnoreCase)) return true;
+            
+            // Common French/English words (not passwords)
+            if (Regex.IsMatch(text, @"(?i)^(pour|messagerie|vérouillé|verrouillé|remarque|doit|définir|distinct|master|status|liaisons|transport|information|generator|with|salt|passed|nécessaire|correct|incorrect|registre)$")) return true;
+            
+            // Partial connection string fragments (not passwords) - starts with semicolon
+            if (Regex.IsMatch(text, @"(?i)^;(jet|data|oledb|initial|source|catalog|integrated|security|trusted)")) return true;
+            
+            return false;
         }
         
         private System.Collections.Generic.List<CredentialEntry> ExtractAllCredentialsFromTable(string content)
@@ -288,8 +373,8 @@ namespace SnaffCore.Concurrency
                     string[] cells = lines[i].Split('\t');
                     if (cells.Length > maxCol)
                     {
-                        string user = cells[userColIndex]?.Trim() ?? "";
-                        string pass = cells[passColIndex]?.Trim() ?? "";
+                        string user = DecodeHtmlEntities(cells[userColIndex]?.Trim() ?? "");
+                        string pass = DecodeHtmlEntities(cells[passColIndex]?.Trim() ?? "");
                         string service = serviceColIndex >= 0 && cells.Length > serviceColIndex ? cells[serviceColIndex]?.Trim() ?? "" : "";
                         string url = urlColIndex >= 0 && cells.Length > urlColIndex ? cells[urlColIndex]?.Trim() ?? "" : "";
 
@@ -300,10 +385,10 @@ namespace SnaffCore.Concurrency
                         
                         bool validUser = !string.IsNullOrWhiteSpace(user) && user.Length >= 2 && user.Length <= 150 &&
                             !Regex.IsMatch(user, @"(?i)^(identifiant|login|username|utilisateur|user|compte)$") &&
-                            !isProcedural && !isGeneric;
+                            !IsVariableReference(user) && !isProcedural && !isGeneric;
                         bool validPass = !string.IsNullOrWhiteSpace(pass) && pass.Length >= 2 && pass.Length <= 150 &&
                             !Regex.IsMatch(pass, @"(?i)^(mdp|password|pwd|mot.*passe|pass)$") &&
-                            !isProcedural && !isGeneric;
+                            !IsVariableReference(pass) && !isProcedural && !isGeneric;
 
                         if (validUser || validPass)
                         {
@@ -420,14 +505,15 @@ namespace SnaffCore.Concurrency
                 
                 foreach (Match match in xmlPasswordPattern.Matches(content))
                 {
-                    string password = match.Groups["password"].Value.Trim();
+                    string password = DecodeHtmlEntities(match.Groups["password"].Value.Trim());
                     string tagName = match.Groups["tagname"].Value;
                     
-                    // Skip obvious placeholders and duplicates
+                    // Skip obvious placeholders, variables, and duplicates
                     if (string.IsNullOrWhiteSpace(password) || 
                         password.Length < 3 || 
                         password.Length > 200 ||
                         Regex.IsMatch(password, @"(?i)^(password|pwd|none|null|empty)$") ||
+                        IsVariableReference(password) ||
                         seenPasswords.Contains(password))
                         continue;
                     
@@ -446,7 +532,7 @@ namespace SnaffCore.Concurrency
                     var userMatches = userPattern.Matches(contextBefore);
                     if (userMatches.Count > 0)
                     {
-                        username = userMatches[userMatches.Count - 1].Groups[2].Value.Trim();
+                        username = DecodeHtmlEntities(userMatches[userMatches.Count - 1].Groups[2].Value.Trim());
                     }
                     
                     credentials.Add(new CredentialEntry 
@@ -472,19 +558,62 @@ namespace SnaffCore.Concurrency
                 if (string.IsNullOrEmpty(content) || content.Length > 500000) 
                     return null;
                 
-                // Find all passwords first (can be multiple)
                 var seenPasswords = new System.Collections.Generic.HashSet<string>();
+                
+                // PATTERN 1: C# string literals - string password = "value" or string userId = "value"
+                var csharpPattern = new Regex(@"(?i)string\s+(password|pwd|userId|username|user)\s*=\s*""([^""]{3,100})""", RegexOptions.None, TimeSpan.FromMilliseconds(1000));
+                foreach (Match match in csharpPattern.Matches(content))
+                {
+                    string varName = match.Groups[1].Value.ToLower();
+                    string value = DecodeHtmlEntities(match.Groups[2].Value.Trim());
+                    
+                    if (string.IsNullOrWhiteSpace(value) || value.Length < 3 || value.Length > 100 || 
+                        IsVariableReference(value) || seenPasswords.Contains(value))
+                        continue;
+                    
+                    seenPasswords.Add(value);
+                    
+                    // Try to find nearby username/password pair
+                    int matchPos = match.Index;
+                    int contextStart = Math.Max(0, matchPos - 200);
+                    int contextEnd = Math.Min(content.Length, matchPos + 200);
+                    string context = content.Substring(contextStart, contextEnd - contextStart);
+                    
+                    string username = "", password = "";
+                    if (varName.Contains("pass") || varName.Contains("pwd"))
+                    {
+                        password = value;
+                        var userMatch = Regex.Match(context, @"(?i)string\s+(userId|username|user)\s*=\s*""([^""]{2,100})""");
+                        if (userMatch.Success)
+                            username = DecodeHtmlEntities(userMatch.Groups[2].Value.Trim());
+                    }
+                    else
+                    {
+                        username = value;
+                        var passMatch = Regex.Match(context, @"(?i)string\s+(password|pwd)\s*=\s*""([^""]{3,100})""");
+                        if (passMatch.Success)
+                            password = DecodeHtmlEntities(passMatch.Groups[2].Value.Trim());
+                    }
+                    
+                    if (!string.IsNullOrEmpty(username) || !string.IsNullOrEmpty(password))
+                    {
+                        credentials.Add(new CredentialEntry { Username = username, Password = password, Service = "", Url = "" });
+                    }
+                }
+                
+                // PATTERN 2: General password patterns
                 var pwdPattern = new Regex(@"(?i)(password|pwd|mdp|mot.?de.?passe)[\s:=\t""']+([^\s\t\n\r""']{4,50})", RegexOptions.None, TimeSpan.FromMilliseconds(1000));
                 
                 foreach (Match pwdMatch in pwdPattern.Matches(content))
                 {
                     if (pwdMatch.Groups.Count > 2)
                     {
-                        string password = pwdMatch.Groups[2].Value.Trim().TrimEnd(',', ';', ')', '}', ']', '"', '\'');
+                        string password = DecodeHtmlEntities(pwdMatch.Groups[2].Value.Trim().TrimEnd(',', ';', ')', '}', ']', '"', '\''));
                         
-                        // Skip placeholders and duplicates
+                        // Skip placeholders, variables, and duplicates
                         if (string.IsNullOrWhiteSpace(password) || password.Length < 4 || password.Length > 100 ||
                             Regex.IsMatch(password, @"(?i)^(password|pwd|mdp|none|null|empty|\*+|x+)$") ||
+                            IsVariableReference(password) ||
                             seenPasswords.Contains(password))
                             continue;
                         
@@ -506,11 +635,13 @@ namespace SnaffCore.Concurrency
                         else
                         {
                             // Try username pattern
-                            var userPattern = new Regex(@"(?i)(user|username|login|identifiant|utilisateur|user\s*id)[\s:=\t]+([^\s\t\n\r""']{3,50})");
+                            var userPattern = new Regex(@"(?i)(user|username|login|identifiant|utilisateur|user\s*id)[\s:=\t""]+([^\s\t\n\r""']{3,50})");
                             var userMatches = userPattern.Matches(contextBefore);
                             if (userMatches.Count > 0)
                             {
-                                username = userMatches[userMatches.Count - 1].Groups[2].Value.Trim();
+                                username = DecodeHtmlEntities(userMatches[userMatches.Count - 1].Groups[2].Value.Trim());
+                                if (IsVariableReference(username))
+                                    username = "";
                             }
                         }
                         
@@ -552,10 +683,11 @@ namespace SnaffCore.Concurrency
         
         private string EscapeCsv(string value)
         {
-            if (string.IsNullOrEmpty(value)) return "";
-            // Replace pipe with similar character to avoid breaking delimiter
-            // Also remove newlines and tabs that break the format
-            return value.Replace("|", "¦").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+            if (string.IsNullOrEmpty(value)) return "\"\"";
+            // Escape quotes by doubling them, replace pipe, clean newlines
+            // Wrap in quotes to protect semicolons and other characters from Excel's regional settings
+            value = value.Replace("\"", "\"\"").Replace("|", "¦").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+            return "\"" + value + "\"";
         }
         
         public void FinalizeCsv()

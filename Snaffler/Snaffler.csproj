@@ -20,6 +20,7 @@
     <PackageReference Include="CommandLineArgumentsParser" Version="3.0.23" />
     <PackageReference Include="CommandLineParser.Core" Version="1.0.1" />
     <PackageReference Include="NLog" Version="5.3.4" />
+    <PackageReference Include="EPPlus" Version="7.5.2" />
   </ItemGroup>
 
   <ItemGroup>

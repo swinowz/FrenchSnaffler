@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using OfficeOpenXml;
+using OfficeOpenXml.Style;
 
 namespace SnaffCore.Concurrency
 {
@@ -12,12 +14,14 @@ namespace SnaffCore.Concurrency
     {
         private static BlockingMq _instance;
         
-        // Direct CSV output - bypasses all memory accumulation
-        private StreamWriter _csvWriter;
-        private readonly object _csvLock = new object();
-        private string _csvPath;
+        // Direct Excel output
+        private ExcelPackage _excelPackage;
+        private ExcelWorksheet _worksheet;
+        private readonly object _excelLock = new object();
+        private string _excelPath;
         private int _findingsCount = 0;
         private int _filesProcessed = 0;
+        private int _currentRow = 2; // Start after header row
         
         // Track written credentials to avoid duplicates
         private System.Collections.Generic.HashSet<string> _writtenCredentials = new System.Collections.Generic.HashSet<string>();
@@ -45,13 +49,35 @@ namespace SnaffCore.Concurrency
         }
         
         /// <summary>
-        /// Initialize direct CSV output (call before scanning starts)
+        /// Initialize direct Excel output (call before scanning starts)
         /// </summary>
         public void InitCsvOutput(string outputPath)
         {
-            _csvPath = Path.ChangeExtension(outputPath, ".csv");
-            _csvWriter = new StreamWriter(_csvPath, false, Encoding.UTF8, 65536);
-            _csvWriter.WriteLine("Severity\tType\tFilePath\tRuleName\tUsername\tPassword\tDateFound\tPreview");
+            // Set EPPlus license context
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            
+            _excelPath = Path.ChangeExtension(outputPath, ".xlsx");
+            _excelPackage = new ExcelPackage(new FileInfo(_excelPath));
+            _worksheet = _excelPackage.Workbook.Worksheets.Add("Findings");
+            
+            // Create header row with formatting
+            _worksheet.Cells[1, 1].Value = "Severity";
+            _worksheet.Cells[1, 2].Value = "Type";
+            _worksheet.Cells[1, 3].Value = "Hostname";
+            _worksheet.Cells[1, 4].Value = "FilePath";
+            _worksheet.Cells[1, 5].Value = "RuleName";
+            _worksheet.Cells[1, 6].Value = "Username";
+            _worksheet.Cells[1, 7].Value = "Password";
+            _worksheet.Cells[1, 8].Value = "DateFound";
+            _worksheet.Cells[1, 9].Value = "Preview";
+            
+            // Format header
+            using (var range = _worksheet.Cells[1, 1, 1, 9])
+            {
+                range.Style.Font.Bold = true;
+                range.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightGray);
+            }
         }
 
         // Message Queue - bounded to prevent memory explosion
@@ -116,13 +142,14 @@ namespace SnaffCore.Concurrency
 
         public void FileResult(FileResult fileResult)
         {
-            // DIRECT CSV WRITE - no memory accumulation
-            if (_csvWriter != null)
+            // DIRECT EXCEL WRITE - no memory accumulation
+            if (_excelPackage != null)
             {
                 // EXTRACT CREDENTIALS OUTSIDE LOCK (parallel processing)
                 string severity = fileResult.MatchedRule?.Triage.ToString() ?? "Unknown";
                 string type = DetermineType(fileResult);
                 string filePath = EscapeCsv(fileResult.FileInfo?.FullName ?? "");
+                string hostname = ExtractHostname(fileResult.FileInfo?.FullName ?? "");
                 string ruleName = EscapeCsv(fileResult.MatchedRule?.RuleName ?? "");
                 string dateFound = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                 
@@ -161,8 +188,8 @@ namespace SnaffCore.Concurrency
                     preview = EscapeCsv(Path.GetFileName(fileResult.FileInfo?.FullName ?? ""));
                 }
                 
-                // LOCK ONLY FOR CSV WRITE (fast operation)
-                lock (_csvLock)
+                // LOCK ONLY FOR EXCEL WRITE (fast operation)
+                lock (_excelLock)
                 {
                     try
                     {
@@ -194,7 +221,23 @@ namespace SnaffCore.Concurrency
                                         credPreview = preview; // Use file preview if no credential context
                                     }
                                     
-                                    _csvWriter.WriteLine($"{credSeverity}\t{credType}\t{filePath}\t{ruleName}\t{EscapeCsv(cred.Username)}\t{EscapeCsv(cred.Password)}\t{dateFound}\t{EscapeCsv(credPreview)}");
+                                    // Write to Excel
+                                    _worksheet.Cells[_currentRow, 1].Value = credSeverity;
+                                    _worksheet.Cells[_currentRow, 2].Value = credType;
+                                    _worksheet.Cells[_currentRow, 3].Value = hostname;
+                                    _worksheet.Cells[_currentRow, 4].Value = filePath;
+                                    _worksheet.Cells[_currentRow, 5].Value = ruleName;
+                                    _worksheet.Cells[_currentRow, 6].Value = cred.Username;
+                                    _worksheet.Cells[_currentRow, 7].Value = cred.Password;
+                                    _worksheet.Cells[_currentRow, 8].Value = dateFound;
+                                    _worksheet.Cells[_currentRow, 9].Value = credPreview;
+                                    
+                                    // Color code by severity
+                                    _worksheet.Cells[_currentRow, 1].Style.Fill.PatternType = ExcelFillStyle.Solid;
+                                    _worksheet.Cells[_currentRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.Red);
+                                    _worksheet.Cells[_currentRow, 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
+                                    
+                                    _currentRow++;
                                     _writtenCredentials.Add(credKey);
                                     _findingsCount++;
                                 }
@@ -203,7 +246,25 @@ namespace SnaffCore.Concurrency
                             {
                                 // No credentials found - downgrade Red to Yellow for sensitive files without actual credentials
                                 string adjustedSeverity = severity == "Red" ? "Yellow" : severity;
-                                _csvWriter.WriteLine($"{adjustedSeverity}\t{type}\t{filePath}\t{ruleName}\t\t\t{dateFound}\t{preview}");
+                                
+                                _worksheet.Cells[_currentRow, 1].Value = adjustedSeverity;
+                                _worksheet.Cells[_currentRow, 2].Value = type;
+                                _worksheet.Cells[_currentRow, 3].Value = hostname;
+                                _worksheet.Cells[_currentRow, 4].Value = filePath;
+                                _worksheet.Cells[_currentRow, 5].Value = ruleName;
+                                _worksheet.Cells[_currentRow, 6].Value = "";
+                                _worksheet.Cells[_currentRow, 7].Value = "";
+                                _worksheet.Cells[_currentRow, 8].Value = dateFound;
+                                _worksheet.Cells[_currentRow, 9].Value = preview;
+                                
+                                // Color code by severity
+                                _worksheet.Cells[_currentRow, 1].Style.Fill.PatternType = ExcelFillStyle.Solid;
+                                if (adjustedSeverity == "Yellow")
+                                {
+                                    _worksheet.Cells[_currentRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.Yellow);
+                                }
+                                
+                                _currentRow++;
                                 _findingsCount++;
                             }
                         }
@@ -211,12 +272,33 @@ namespace SnaffCore.Concurrency
                         {
                             // No text content - downgrade Red to Yellow
                             string adjustedSeverity = severity == "Red" ? "Yellow" : severity;
-                            _csvWriter.WriteLine($"{adjustedSeverity}\t{type}\t{filePath}\t{ruleName}\t\t\t{dateFound}\t{preview}");
+                            
+                            _worksheet.Cells[_currentRow, 1].Value = adjustedSeverity;
+                            _worksheet.Cells[_currentRow, 2].Value = type;
+                            _worksheet.Cells[_currentRow, 3].Value = hostname;
+                            _worksheet.Cells[_currentRow, 4].Value = filePath;
+                            _worksheet.Cells[_currentRow, 5].Value = ruleName;
+                            _worksheet.Cells[_currentRow, 6].Value = "";
+                            _worksheet.Cells[_currentRow, 7].Value = "";
+                            _worksheet.Cells[_currentRow, 8].Value = dateFound;
+                            _worksheet.Cells[_currentRow, 9].Value = preview;
+                            
+                            // Color code by severity
+                            _worksheet.Cells[_currentRow, 1].Style.Fill.PatternType = ExcelFillStyle.Solid;
+                            if (adjustedSeverity == "Yellow")
+                            {
+                                _worksheet.Cells[_currentRow, 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.Yellow);
+                            }
+                            
+                            _currentRow++;
                             _findingsCount++;
                         }
                         
-                        // Flush every 10 writes to balance visibility and performance
-                        if (_findingsCount % 10 == 0) _csvWriter.Flush();
+                        // Save every 10 writes to balance visibility and performance
+                        if (_findingsCount % 10 == 0)
+                        {
+                            _excelPackage.Save();
+                        }
                     }
                     catch { }
                 }
@@ -240,6 +322,30 @@ namespace SnaffCore.Concurrency
             public string Username { get; set; }
             public string Password { get; set; }
             public string Url { get; set; }
+        }
+        
+        /// <summary>
+        /// Extract hostname from UNC path or drive letter path
+        /// </summary>
+        private string ExtractHostname(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath)) return "";
+            
+            // UNC path: \\server\share\file
+            if (filePath.StartsWith(@"\\"))
+            {
+                int firstSlash = 2;
+                int secondSlash = filePath.IndexOf('\\', firstSlash);
+                if (secondSlash > firstSlash)
+                {
+                    return filePath.Substring(firstSlash, secondSlash - firstSlash);
+                }
+                // Just \\server with no trailing slash
+                return filePath.Substring(firstSlash);
+            }
+            
+            // Local path or mapped drive - return "localhost" or extract computer name
+            return Environment.MachineName ?? "localhost";
         }
         
         /// <summary>
@@ -692,19 +798,30 @@ namespace SnaffCore.Concurrency
         
         public void FinalizeCsv()
         {
-            if (_csvWriter != null)
+            if (_excelPackage != null)
             {
-                lock (_csvLock)
+                lock (_excelLock)
                 {
-                    _csvWriter.Flush();
-                    _csvWriter.Close();
-                    _csvWriter = null;
-                    Info($"CSV finalized: {_findingsCount} findings from {_filesProcessed} files processed");
+                    // Auto-fit columns for readability
+                    _worksheet.Cells[_worksheet.Dimension.Address].AutoFitColumns();
+                    
+                    // Save final version
+                    _excelPackage.Save();
+                    _excelPackage.Dispose();
+                    _excelPackage = null;
+                    Info($"Excel file finalized: {_findingsCount} findings from {_filesProcessed} files processed");
                 }
             }
         }
         
-        public void Dispose() { _csvWriter?.Dispose(); }
+        public void Dispose() 
+        { 
+            if (_excelPackage != null)
+            {
+                _excelPackage.Save();
+                _excelPackage.Dispose();
+            }
+        }
         public int GetFindingsCount() => _findingsCount;
         public void DirResult(DirResult dirResult)
         {

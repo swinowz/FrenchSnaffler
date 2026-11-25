@@ -115,6 +115,7 @@ failed += ParserRegression.Run();
 failed += ArchiveRegression.Run();
 failed += FormatRegression.Run();
 failed += CertificateRegression.Run();
+failed += SccmRegression.Run();
 return failed == 0 ? 0 : 1;
 
 public class RuleSet

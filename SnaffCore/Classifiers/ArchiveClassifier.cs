@@ -4,7 +4,6 @@ using SharpCompress.Archives;
 using SnaffCore.Concurrency;
 using SnaffCore.FileScan;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
@@ -18,21 +17,14 @@ namespace SnaffCore.Classifiers
         // e.g. \\srv\share\backup.zip!conf\web.config
         public const string MemberSeparator = "!";
 
-        // Temp extraction path -> path shown in reports. Findings raised while a
-        // member is scanned must point at the archive, not at a deleted temp file.
-        private static readonly ConcurrentDictionary<string, string> DisplayPaths =
-            new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
         // Scans are synchronous on the worker thread: nested archives re-enter
         // Scan() through FileScanner, so depth and byte budget are per thread.
         [ThreadStatic] private static int _depth;
         [ThreadStatic] private static long _budgetLeft;
 
-        public static string GetDisplayPath(string path)
-        {
-            if (path == null) return null;
-            return DisplayPaths.TryGetValue(path, out string display) ? display : null;
-        }
+        // Findings raised while a member is scanned point at the archive
+        // (archive.zip!dir\file), not at the deleted temp file.
+        public static string GetDisplayPath(string path) => ScanAliases.Get(path);
 
         public static void Scan(FileInfo fileInfo, int depth = 0)
         {
@@ -75,16 +67,12 @@ namespace SnaffCore.Classifiers
                             {
                                 try { File.SetLastWriteTime(temp, entry.LastModifiedTime.Value); } catch { }
                             }
-                            DisplayPaths[temp] = archiveDisplay + MemberSeparator + memberPath;
                             // FileScanner applies every rule, including EnterArchive for nested archives.
-                            new FileScanner().ScanFile(temp);
+                            using (ScanAliases.Use(temp, archiveDisplay + MemberSeparator + memberPath))
+                                new FileScanner().ScanFile(temp);
                         }
                         catch (Exception ex) { mq.Trace("Archive entry failed " + entry.Key + ": " + ex.Message); }
-                        finally
-                        {
-                            DisplayPaths.TryRemove(temp, out _);
-                            try { File.Delete(temp); } catch { }
-                        }
+                        finally { try { File.Delete(temp); } catch { } }
                     }
                 }
             }

@@ -24,16 +24,18 @@ namespace SnaffCore.Classifiers
             BlockingMq Mq = BlockingMq.GetMq();
             // figure out what part we gonna look at
             string stringToMatch = null;
+            string logicalPath = ScanAliases.Get(fileInfo.FullName) ?? fileInfo.FullName;
+            string logicalName = ScanAliases.LogicalName(logicalPath);
 
             switch (ClassifierRule.MatchLocation)
             {
                 case MatchLoc.FileExtension:
-                    stringToMatch = fileInfo.Extension;
+                    stringToMatch = ScanAliases.LogicalExtension(logicalPath);
                     // special handling to treat files named like 'thing.kdbx.bak'
                     if (stringToMatch == ".bak")
                     {
                         // strip off .bak
-                        string subName = fileInfo.Name.Replace(".bak", "");
+                        string subName = logicalName.Replace(".bak", "");
                         stringToMatch = Path.GetExtension(subName);
                         // if this results in no file extension, put it back.
                         if (stringToMatch == "")
@@ -49,10 +51,10 @@ namespace SnaffCore.Classifiers
                     }
                     break;
                 case MatchLoc.FileName:
-                    stringToMatch = fileInfo.Name;
+                    stringToMatch = logicalName;
                     break;
                 case MatchLoc.FilePath:
-                    stringToMatch = fileInfo.FullName;
+                    stringToMatch = logicalPath;
                     break;
                 case MatchLoc.FileLength:
                     if (!SizeMatch(fileInfo))

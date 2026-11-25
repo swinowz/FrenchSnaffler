@@ -32,6 +32,15 @@ namespace SnaffCore.TreeWalk
                  return;
              }
 
+            // SCCM content library: scan DataLib entries under their real names
+            // instead of the hash-named FileLib files.
+            if (SccmContentLib.IsContentLibRoot(currentDir))
+            {
+                Mq.Info("SCCM content library found, resolving DataLib names: " + currentDir);
+                WalkSccmDataLib(Path.Combine(currentDir, "DataLib"), currentDir);
+                return;
+            }
+
             // Direct directory enumeration - no timeout (let the OS handle it)
             string[] files = null;
             string[] subDirs = null;
@@ -85,26 +94,7 @@ namespace SnaffCore.TreeWalk
             {
                 foreach (string dirStr in subDirs)
                 {
-                    bool scanDir = true;
-                    foreach (ClassifierRule classifier in MyOptions.DirClassifiers)
-                    {
-                        try
-                        {
-                            DirClassifier dirClassifier = new DirClassifier(classifier);
-                            DirResult dirResult = dirClassifier.ClassifyDir(dirStr);
-
-                            if (dirResult.ScanDir == false)
-                            {
-                                scanDir = false;
-                                break;
-                            }
-                        }
-                        catch (Exception e)
-                        {
-                            Mq.Trace(e.ToString());
-                            continue;
-                        }
-                    }
+                    bool scanDir = ShouldScanDir(dirStr);
                     if (scanDir == true)
                     {
                         TreeTaskScheduler.New(() =>
@@ -125,6 +115,71 @@ namespace SnaffCore.TreeWalk
                         Mq.Trace("Skipped scanning on " + dirStr + " due to Discard rule match.");
                     }
                 }
+            }
+        }
+
+        private bool ShouldScanDir(string dirStr)
+        {
+            foreach (ClassifierRule classifier in MyOptions.DirClassifiers)
+            {
+                try
+                {
+                    DirResult dirResult = new DirClassifier(classifier).ClassifyDir(dirStr);
+                    if (dirResult.ScanDir == false) return false;
+                }
+                catch (Exception e)
+                {
+                    Mq.Trace(e.ToString());
+                }
+            }
+            return true;
+        }
+
+        private void WalkSccmDataLib(string currentDir, string libRoot)
+        {
+            string[] files = null;
+            string[] subDirs = null;
+            try { files = Directory.GetFiles(currentDir, "*.INI"); }
+            catch (Exception e) when (e is UnauthorizedAccessException || e is IOException) { }
+            catch (Exception e) { Mq.Trace(e.ToString()); }
+
+            if (files != null)
+            {
+                foreach (string ini in files)
+                {
+                    FileTaskScheduler.New(() =>
+                    {
+                        try { SccmContentLib.ScanDataLibEntry(ini, libRoot, FileScanner); }
+                        catch (Exception e)
+                        {
+                            Mq.Error("Exception in SCCM DataLib task for " + ini);
+                            Mq.Trace(e.ToString());
+                        }
+                    });
+                }
+            }
+
+            try { subDirs = Directory.GetDirectories(currentDir); }
+            catch (Exception e) when (e is UnauthorizedAccessException || e is IOException) { }
+            catch (Exception e) { Mq.Trace(e.ToString()); }
+
+            if (subDirs == null) return;
+            foreach (string dirStr in subDirs)
+            {
+                if (!ShouldScanDir(dirStr))
+                {
+                    Mq.Trace("Skipped scanning on " + dirStr + " due to Discard rule match.");
+                    continue;
+                }
+                TreeTaskScheduler.New(() =>
+                {
+                    try { WalkSccmDataLib(dirStr, libRoot); }
+                    catch (Exception e)
+                    {
+                        Mq.Error("Exception in SCCM DataLib walker for dir " + dirStr);
+                        Mq.Error(e.ToString());
+                    }
+                });
             }
         }
     }

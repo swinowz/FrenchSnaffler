@@ -95,6 +95,7 @@ try
 finally { if (Directory.Exists(temp)) Directory.Delete(temp, true); }
 Console.WriteLine($"{cases.Length - failed}/{cases.Length} passed");
 failed += ParserRegression.Run();
+failed += ArchiveRegression.Run();
 return failed == 0 ? 0 : 1;
 
 public class RuleSet

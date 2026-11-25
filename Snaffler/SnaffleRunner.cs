@@ -482,7 +482,7 @@ namespace ShareAuditor
                     fileSizeString = BytesToString(fileSize);
                 }
 
-                string filepath = message.FileResult.FileInfo.FullName;
+                string filepath = message.FileResult.ReportPath;
 
                 string matchcontext = "";
                 if (message.FileResult.TextResult != null)
@@ -505,7 +505,7 @@ namespace ShareAuditor
             catch (Exception e)
             {
                 Console.WriteLine(e.ToString());
-                Console.WriteLine(message.FileResult.FileInfo.FullName);
+                Console.WriteLine(message.FileResult.ReportPath);
                 return "";
             }
         }

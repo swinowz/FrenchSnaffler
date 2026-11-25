@@ -147,7 +147,7 @@ namespace SnaffCore.Concurrency
             string evidence = fileResult?.TextResult?.MatchedValue;
             if (string.IsNullOrEmpty(evidence)) evidence = fileResult?.TextResult?.MatchContext;
             if (string.IsNullOrEmpty(evidence)) evidence = fileResult?.MatchedRule?.RuleName;
-            string findingKey = (fileResult?.FileInfo?.FullName ?? "") + "\u001f" + evidence;
+            string findingKey = (fileResult?.ReportPath ?? "") + "\u001f" + evidence;
             if (!_reportedFindingKeys.TryAdd(findingKey, 0)) return;
 
             // DIRECT EXCEL WRITE - no memory accumulation
@@ -156,8 +156,8 @@ namespace SnaffCore.Concurrency
                 // EXTRACT CREDENTIALS OUTSIDE LOCK (parallel processing)
                 string severity = fileResult.MatchedRule?.Triage.ToString() ?? "Unknown";
                 string type = DetermineType(fileResult);
-                string filePath = EscapeCsv(fileResult.FileInfo?.FullName ?? "");
-                string hostname = ExtractHostname(fileResult.FileInfo?.FullName ?? "");
+                string filePath = EscapeCsv(fileResult.ReportPath ?? "");
+                string hostname = ExtractHostname(fileResult.ReportPath ?? "");
                 string ruleName = EscapeCsv(fileResult.MatchedRule?.RuleName ?? "");
                 string dateFound = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
                 
@@ -193,7 +193,7 @@ namespace SnaffCore.Concurrency
                 }
                 else
                 {
-                    preview = EscapeCsv(Path.GetFileName(fileResult.FileInfo?.FullName ?? ""));
+                    preview = EscapeCsv(Path.GetFileName(fileResult.ReportPath ?? ""));
                 }
                 
                 // LOCK ONLY FOR EXCEL WRITE (fast operation)

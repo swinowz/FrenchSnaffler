@@ -26,11 +26,13 @@ Les ajouts de ce fork portent sur les points suivants ; ils s’ajoutent aux fon
 | **Signatures cloud actives** | GitHub, Google, Azure, JWT et Kubernetes via les relais par défaut ; authentification Docker dans ses fichiers de configuration. |
 | **Règles francophones** | Recherche dans les noms de fichiers, le texte et les en-têtes de tableaux de mots de passe. |
 | **Analyse de contenu groupée** | Lecture du contenu mutualisée entre plusieurs règles d’un même relais, pour réduire les lectures répétées. |
-| **Lecture bureautique retravaillée** | ExcelDataReader pour lire les classeurs ligne par ligne ; extraction directe du XML des DOCX, avec prise en compte des tableaux, en-têtes et pieds de page. |
+| **Lecture bureautique retravaillée** | ExcelDataReader pour lire les classeurs ligne par ligne ; extraction directe du XML des DOCX, avec prise en compte des tableaux, en-têtes, pieds de page, notes de bas de page, notes de fin et commentaires. |
+| **Formats OpenDocument** | Fichiers LibreOffice `.odt`, `.ods`, `.odp`, `.ott`, `.ots` analysés sans bibliothèque supplémentaire ; les documents chiffrés sont signalés en `PasswordProtectedFile`. |
 | **Gestion des ressources** | Files de messages bornées, contenu complet conservé seulement pour l’export Excel, fermeture de handles et suppression de collectes mémoire forcées bloquantes. |
 | **Concurrence et suivi du scan** | Choix automatique du nombre de workers, option `-x` pour le fixer, compteurs de tâches et suivi du débit, de la progression et de la mémoire. |
-| **Qualité des résultats** | Déduplication par fichier et preuve détectée, filtrage de la clé AWS d’exemple publique, corrections de l’analyse de certificats et des sorties JSON/texte. |
-| **Archives** | Implémentation de l’action `EnterArchive`, avec paramètres de profondeur, nombre d’entrées et tailles. Fonction encore à valider selon les formats. |
+| **Qualité des résultats** | Déduplication par fichier et preuve détectée, filtrage de la clé AWS d’exemple publique, sorties JSON/texte corrigées. |
+| **Certificats** | Chargement via `X509CertificateLoader` et clés éphémères (aucune écriture dans le magasin de clés). Les PEM avec clé privée RSA, PKCS#8 ou chiffrée sont reconnus, ainsi que les clés PEM seules (`PrivateKeyWithoutCertificate`). |
+| **Archives** | Action `EnterArchive` (zip, 7z, rar, tar, gz, bz2, xz). Chaque membre garde son nom et ses dossiers, donc les règles par nom (`id_rsa`, `unattend.xml`, `web.config`) et par chemin (`\.ssh\`, `\.aws\`) s’appliquent aussi dans les archives. Le rapport indique `archive.zip!dossier\fichier`, y compris pour les archives imbriquées. Profondeur et tailles sont contrôlées pendant l’extraction ; les chemins `..` sont neutralisés. |
 | **Socle actuel** | Cible Windows x64 sous .NET 10, Server GC, GC concurrent et Tiered PGO. |
 
 Ces changements visent à réduire le coût des scans et à faciliter le traitement des résultats. Aucun gain chiffré universel n’est annoncé : le débit dépend du réseau, des documents, des règles et des ressources disponibles. L’export Excel conserve le classeur en mémoire ; ce n’est pas une sortie à mémoire constante.
@@ -139,7 +141,7 @@ Pour partir d’une configuration correspondant à la version exécutée :
 .\ShareAuditor.exe -z "C:\Audit\audit.local.toml"
 ```
 
-La configuration expose aussi `MaxArchiveDepth` (3), `MaxArchiveEntries` (10 000), `MaxArchiveEntryBytes` (50 Mio) et `MaxArchiveTotalBytes` (500 Mio). Ces seuils concernent chaque appel d’analyse d’archive ; ils ne constituent pas une limite globale sur toutes les archives imbriquées.
+La configuration expose aussi `MaxArchiveDepth` (3), `MaxArchiveEntries` (10 000), `MaxArchiveEntryBytes` (50 Mio) et `MaxArchiveTotalBytes` (500 Mio). La profondeur compte les archives imbriquées depuis l’archive trouvée sur le partage, et le budget `MaxArchiveTotalBytes` est partagé par toute cette arborescence. La taille de chaque membre est vérifiée pendant la copie : une taille déclarée mensongère ne permet pas de dépasser la limite.
 
 ## Compiler et publier
 
@@ -163,7 +165,7 @@ La commande compile la branche actuellement extraite. Les fonctions décrites po
 dotnet run --project .\tests\CloudRulesRegression
 ```
 
-Ce test de régression charge les règles TOML par défaut et utilise le moteur réel de classification sur des fichiers temporaires synthétiques. Il vérifie les six familles de signatures, les relais de fichiers, un document DOCX et des cas négatifs. Six tests supplémentaires couvrent la lecture XLS/XLSX, les parseurs Word et Outlook, les archives ZIP et l’export Excel. Aucun véritable secret n’est stocké dans les tests. Il peut être exécuté sous Linux pour cette partie locale du moteur : l’initialisation de l’identité Windows est contournée dans le test uniquement. La découverte AD/SMB n’est pas couverte par ce test.
+Ce test de régression charge les règles TOML par défaut et utilise le moteur réel de classification sur des fichiers temporaires synthétiques. Il vérifie les six familles de signatures, les relais de fichiers, un document DOCX et des cas négatifs. D’autres séries couvrent la lecture XLS/XLSX, les parseurs Word et Outlook, l’export Excel, les archives (règles par nom dans une archive, chemin affiché, archives imbriquées, profondeur, chemins `..`, limite de taille), les formats OpenDocument et notes Word, et les certificats (PEM avec ou sans clé, DER, PFX sans mot de passe, mot de passe faible ou fort). Aucun véritable secret n’est stocké dans les tests. Il peut être exécuté sous Linux pour cette partie locale du moteur : l’initialisation de l’identité Windows est contournée dans le test uniquement. La découverte AD/SMB n’est pas couverte par ce test.
 
 ## Dépendances et audit de sécurité
 
@@ -175,13 +177,13 @@ Pour contrôler les dépendances directes et transitives après restauration :
 dotnet list .\Snaffler\Snaffler.csproj package --vulnerable --include-transitive
 ```
 
-Au 25 novembre 2026, cet audit ne signale aucune vulnérabilité connue dans le graphe restauré de ShareAuditor. Ce résultat dépend de la base d’avis NuGet à la date du contrôle ; les avertissements de compilation liés aux anciennes API et aux appels Windows sont distincts.
+Au 25 novembre 2026, cet audit ne signale aucune vulnérabilité connue dans le graphe restauré de ShareAuditor. Ce résultat dépend de la base d’avis NuGet à la date du contrôle ; la compilation ne produit plus d’avertissement C#, d’analyse de plateforme ou d’API obsolète. Seul reste l’avertissement de licence OSMF ajouté par NPOI 2.8 (`AcceptNPOIOSMFLicense`), qui demande une acceptation explicite de la licence.
 
 ## Limites actuelles
 
 - Les règles filtrent les fichiers avant l’analyse de contenu. Augmenter `-r` ne suffit pas à faire analyser tous les formats.
-- Le parsing prend principalement en charge les formats Office sélectionnés par les relais. La présence d’un parseur PDF ou d’autres formats dans les dépendances n’active pas leur analyse dans les règles par défaut.
-- L’analyse d’archives utilise des fichiers temporaires ; les résultats peuvent exposer leur chemin temporaire plutôt que celui du membre dans l’archive. La gestion des archives chiffrées et imbriquées reste à valider. Les contrôles de taille après extraction ne constituent pas une protection complète contre une archive malveillante.
+- Le parsing prend en charge les formats Office et OpenDocument sélectionnés par les relais. Les PDF, présentations PowerPoint, PST/OST, bases SQLite, OneNote et images (OCR) ne sont pas analysés par les règles par défaut.
+- L’analyse d’archives extrait chaque membre dans le dossier temporaire de l’utilisateur, puis le supprime. La date et la taille affichées sont celles du membre. L’option `-m` (copie des fichiers retenus) copie le membre extrait, rangé sous le chemin de l’archive.
 - Des tâches réseau considérées comme bloquées peuvent être abandonnées. Les accès refusés, erreurs d’E/S et timeouts peuvent donc laisser un scan incomplet ; consulter les journaux.
 - Le nombre de workers automatique est un point de départ. Sur un serveur SMB lent ou avec de gros documents, fixer une valeur prudente avec `-x`, par exemple `-x 4`.
 

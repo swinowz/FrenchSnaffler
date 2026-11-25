@@ -244,7 +244,7 @@ namespace SnaffCore.Classifiers
                 {
                     try
                     {
-                        string result = ParseExcelStreaming(fileInfo.FullName);
+                        string result = ParseExcelStreamingWithRetry(fileInfo.FullName);
                         if (!string.IsNullOrEmpty(result))
                             return result;
                     }
@@ -398,6 +398,28 @@ namespace SnaffCore.Classifiers
             Mq.FileResult(fileResult);
         }
         
+        // Small but highly compressed workbooks expand to many MB inside ExcelDataReader.
+        // With several workers on a small host this can throw OutOfMemoryException; the
+        // Toxy fallback then rejects the file as a zip bomb and its findings are lost
+        // (seen as run-to-run variation on Windows). Retry once, alone, after a GC.
+        private static readonly object ExcelRetryLock = new object();
+        private string ParseExcelStreamingWithRetry(string filePath)
+        {
+            try
+            {
+                return ParseExcelStreaming(filePath);
+            }
+            catch (OutOfMemoryException)
+            {
+                lock (ExcelRetryLock)
+                {
+                    Mq.Trace($"Excel parse ran out of memory, retrying alone: {filePath}");
+                    System.GC.Collect();
+                    return ParseExcelStreaming(filePath);
+                }
+            }
+        }
+
         // Lecture Excel en STREAMING (xlsx ET xls) via ExcelDataReader : ligne par ligne, sans DOM complet.
         // Sortie tab-delimited (identique a l'ancien parseur) pour l'extraction de creds.
         private static bool _codePagesRegistered = false;

@@ -167,18 +167,6 @@ dotnet run --project .\tests\CloudRulesRegression
 
 Ce test de régression charge les règles TOML par défaut et utilise le moteur réel de classification sur des fichiers temporaires synthétiques. Il vérifie les six familles de signatures, les relais de fichiers, un document DOCX et des cas négatifs. D’autres séries couvrent la lecture XLS/XLSX, les parseurs Word et Outlook, l’export Excel, les archives (règles par nom dans une archive, chemin affiché, archives imbriquées, profondeur, chemins `..`, limite de taille), les formats OpenDocument et notes Word, et les certificats (PEM avec ou sans clé, DER, PFX sans mot de passe, mot de passe faible ou fort). Aucun véritable secret n’est stocké dans les tests. Il peut être exécuté sous Linux pour cette partie locale du moteur : l’initialisation de l’identité Windows est contournée dans le test uniquement. La découverte AD/SMB n’est pas couverte par ce test.
 
-## Dépendances et audit de sécurité
-
-Les dépendances de lecture ont été mises à jour : Toxy **2.6.0**, NPOI **2.8.1**, MsgReader **6.2.1** (OpenMcdf **3.4.0**) et SharpCompress **0.50.12**. Les paquets Microsoft utilisés par le projet sont sur le correctif **10.0.15**. Les anciennes dépendances transitives ImageSharp et Newtonsoft.Json ont disparu du graphe de l’application.
-
-Pour contrôler les dépendances directes et transitives après restauration :
-
-```powershell
-dotnet list .\Snaffler\Snaffler.csproj package --vulnerable --include-transitive
-```
-
-Au 25 novembre 2026, cet audit ne signale aucune vulnérabilité connue dans le graphe restauré de ShareAuditor. Ce résultat dépend de la base d’avis NuGet à la date du contrôle ; la compilation ne produit plus d’avertissement C#, d’analyse de plateforme ou d’API obsolète. Seul reste l’avertissement de licence OSMF ajouté par NPOI 2.8 (`AcceptNPOIOSMFLicense`), qui demande une acceptation explicite de la licence.
-
 ## Limites actuelles
 
 - Les règles filtrent les fichiers avant l’analyse de contenu. Augmenter `-r` ne suffit pas à faire analyser tous les formats.

@@ -149,7 +149,7 @@ namespace ShareAuditor
                     {
                         nlogConfig.AddRule(LogLevel, LogLevel.Fatal, logconsole);
                     }
-                    logconsole.Layout = "${message}";
+                    logconsole.Layout = "${message:raw=true}";
                 }
 
                 if (Options.LogToFile)
@@ -163,9 +163,12 @@ namespace ShareAuditor
                     {
                         nlogConfig.AddRule(LogLevel, LogLevel.Fatal, logfile);
                     }
+                    // Log lines are passed to NLog as message templates with the
+                    // SnafflerMessage as argument: "{Red}" in a result would be replaced
+                    // by that argument. Render the text raw; eventProperties keep the object.
                     if (Options.LogType == LogType.Plain)
                     {
-                        logfile.Layout = "${message}";
+                        logfile.Layout = "${message:raw=true}";
                     }
                     else if (Options.LogType == LogType.JSON)
                     {
@@ -178,7 +181,7 @@ namespace ShareAuditor
                             {
                                 new JsonAttribute("time", "${longdate}"),
                                 new JsonAttribute("level", "${level}"),
-                                new JsonAttribute("message", "${message}"),
+                                new JsonAttribute("message", "${message:raw=true}"),
                                 new JsonAttribute("eventProperties", eventProperties,
                                 //don't escape layout
                                 false)

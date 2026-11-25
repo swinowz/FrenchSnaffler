@@ -107,7 +107,19 @@ namespace ShareAuditor
             ValueArgument<string> testFileArg = new ValueArgument<string>('w', "testfile", "Test credential extraction methods on a specific file. Outputs method results to console only.");
             ValueArgument<string> timeOutArg = new ValueArgument<string>('e', "timeout",
                 "Interval between status updates (in minutes) also acts as a timeout for AD data to be gathered via LDAP. Turn this knob up if you aren't getting any computers from AD when you run ShareAuditor through a proxy or other slow link. Default = 5");
-            // list of letters i haven't used yet: gnq
+            // list of letters i haven't used yet: gq
+            ValueArgument<string> checkpointArg = new ValueArgument<string>("checkpoint")
+            {
+                Description = "Checkpoint file to pause/resume a long scan: progress is recorded as it goes; after an interruption run the exact same command again to skip what is done. The resumed run writes its findings to <outfile>-resume-N."
+            };
+            ValueArgument<string> runAsUserArg = new ValueArgument<string>("username")
+            {
+                Description = "Scan with another account for network access, like runas /netonly: DOMAIN\\user or user@domain. Works from a machine outside the domain."
+            };
+            ValueArgument<string> runAsPasswordArg = new ValueArgument<string>("password")
+            {
+                Description = "Password for --username. Omit it to be prompted without echo (keeps it out of the shell history and process list)."
+            };
 
             CommandLineParser.CommandLineParser parser = new CommandLineParser.CommandLineParser();
             parser.Arguments.Add(timeOutArg);
@@ -134,6 +146,9 @@ namespace ShareAuditor
             parser.Arguments.Add(ruleDirArg);
             parser.Arguments.Add(logType);
             parser.Arguments.Add(compExclusionArg);
+            parser.Arguments.Add(checkpointArg);
+            parser.Arguments.Add(runAsUserArg);
+            parser.Arguments.Add(runAsPasswordArg);
 
             // extra check to handle builtin behaviour from cmd line arg parser
             if ((args.Contains("--help") || args.Contains("/?") || args.Contains("help") || args.Contains("-h") || args.Length == 0))
@@ -436,6 +451,26 @@ namespace ShareAuditor
                         parsedConfig = Toml.ReadFile<Options>(configFile, settings);
                         Mq.Info("Read config file from " + configFile);
                     }
+                }
+
+                // CLI-only settings: applied after a -z config file replaced parsedConfig.
+                if (checkpointArg.Parsed && !String.IsNullOrWhiteSpace(checkpointArg.Value))
+                {
+                    parsedConfig.CheckpointFile = System.IO.Path.GetFullPath(checkpointArg.Value);
+                }
+                if (runAsUserArg.Parsed && !String.IsNullOrWhiteSpace(runAsUserArg.Value))
+                {
+                    var (runAsDomain, runAsUser) = SnaffCore.RunAsCredentials.Split(runAsUserArg.Value, parsedConfig.TargetDomain);
+                    parsedConfig.RunAsDomain = runAsDomain;
+                    parsedConfig.RunAsUser = runAsUser;
+                    parsedConfig.RunAsPassword = runAsPasswordArg.Parsed
+                        ? runAsPasswordArg.Value ?? ""
+                        : SnaffCore.RunAsCredentials.PromptPassword(runAsDomain + "\\" + runAsUser);
+                    Mq.Info("Network access will use " + runAsDomain + "\\" + runAsUser + " (runas /netonly style).");
+                }
+                else if (runAsPasswordArg.Parsed)
+                {
+                    Mq.Error("--password is ignored without --username.");
                 }
 
                 // Default: If verbose mode is enabled but no output destination specified, use console

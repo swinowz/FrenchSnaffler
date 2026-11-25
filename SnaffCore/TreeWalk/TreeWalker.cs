@@ -57,9 +57,12 @@ namespace SnaffCore.TreeWalk
                 Mq.Trace(e.ToString());
             }
 
-            // Queue files for scanning
-            if (files != null)
+            // Queue files for scanning (skipped when a previous run finished this
+            // directory; its subdirectories are still walked below)
+            var checkpoint = SnaffCore.Checkpoint.ScanCheckpoint.Instance;
+            if (files != null && !checkpoint.IsDirComplete(currentDir))
             {
+                checkpoint.BeginDir(currentDir, files.Length);
                 foreach (string file in files)
                 {
                     FileTaskScheduler.New(() =>
@@ -73,6 +76,7 @@ namespace SnaffCore.TreeWalk
                             Mq.Error("Exception in FileScanner task for file " + file);
                             Mq.Trace(e.ToString());
                         }
+                        finally { checkpoint.FileDone(currentDir); }
                     });
                 }
             }
@@ -143,8 +147,10 @@ namespace SnaffCore.TreeWalk
             catch (Exception e) when (e is UnauthorizedAccessException || e is IOException) { }
             catch (Exception e) { Mq.Trace(e.ToString()); }
 
-            if (files != null)
+            var checkpoint = SnaffCore.Checkpoint.ScanCheckpoint.Instance;
+            if (files != null && !checkpoint.IsDirComplete(currentDir))
             {
+                checkpoint.BeginDir(currentDir, files.Length);
                 foreach (string ini in files)
                 {
                     FileTaskScheduler.New(() =>
@@ -155,6 +161,7 @@ namespace SnaffCore.TreeWalk
                             Mq.Error("Exception in SCCM DataLib task for " + ini);
                             Mq.Trace(e.ToString());
                         }
+                        finally { checkpoint.FileDone(currentDir); }
                     });
                 }
             }

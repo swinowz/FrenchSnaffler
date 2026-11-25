@@ -54,6 +54,16 @@ namespace ShareAuditor
             {
                 // parse cli opts in
                 Options = Config.Parse(args);
+                if (Options != null && !String.IsNullOrEmpty(Options.CheckpointFile) && File.Exists(Options.CheckpointFile)
+                    && !String.IsNullOrEmpty(Options.LogFilePath))
+                {
+                    string resumeOutput = SnaffCore.Checkpoint.ScanCheckpoint.ResumeOutputPath(Options.LogFilePath);
+                    if (resumeOutput != Options.LogFilePath)
+                    {
+                        Console.WriteLine("[Checkpoint] Resuming: findings go to " + resumeOutput + " (the first report is kept).");
+                        Options.LogFilePath = resumeOutput;
+                    }
+                }
 
                 if (Options == null)
                 {
@@ -224,9 +234,18 @@ namespace ShareAuditor
                 var tokenSource = new CancellationTokenSource();
                 var token = tokenSource.Token;
 
+                // With --username, every task runs under a NEW_CREDENTIALS token:
+                // BlockingTaskScheduler captures the current identity when it queues
+                // work, so the alternate credentials flow to share, tree and file tasks.
+                Microsoft.Win32.SafeHandles.SafeAccessTokenHandle runAsToken = null;
+                if (!String.IsNullOrEmpty(Options.RunAsUser))
+                {
+                    runAsToken = SnaffCore.RunAsCredentials.Logon(Options.RunAsDomain, Options.RunAsUser, Options.RunAsPassword);
+                    Options.RunAsPassword = null;
+                }
                 WindowsIdentity impersonatedUser = WindowsIdentity.GetCurrent();
                 Task thing = Task.Factory.StartNew(() => {
-                    WindowsIdentity.RunImpersonated(impersonatedUser.AccessToken, () =>
+                    WindowsIdentity.RunImpersonated(runAsToken ?? impersonatedUser.AccessToken, () =>
                     {
                         controller.Execute();
                     });

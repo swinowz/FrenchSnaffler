@@ -41,6 +41,7 @@ namespace SnaffCore
         {
             MyOptions = options;
             Mq = BlockingMq.GetMq();
+            SnaffCore.Checkpoint.ScanCheckpoint.Instance.Load(MyOptions.CheckpointFile);
 
             int shareThreads = MyOptions.ShareThreads;
             int treeThreads = MyOptions.TreeThreads;
@@ -237,6 +238,7 @@ namespace SnaffCore
             TimeSpan runSpan = finished.Subtract(StartTime);
             Mq.Info("Finished at " + finished.ToLocalTime());
             Mq.Info("Snafflin' took " + runSpan);
+            SnaffCore.Checkpoint.ScanCheckpoint.Instance.Close();
             Mq.Finish();
         }
 

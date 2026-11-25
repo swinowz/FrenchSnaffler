@@ -30,6 +30,27 @@ namespace SnaffCore.ShareFind
 
         internal void GetComputerShares(string computer)
         {
+            var checkpoint = SnaffCore.Checkpoint.ScanCheckpoint.Instance;
+            if (checkpoint.IsComputerComplete(computer))
+            {
+                // Shares already enumerated by a previous run: replay them; TreeWalker
+                // skips the directories that were completed.
+                Mq.Trace("Checkpoint: reusing the shares found on " + computer);
+                foreach (string knownShare in checkpoint.SharesFor(computer))
+                {
+                    TreeTaskScheduler.New(() =>
+                    {
+                        try { TreeWalker.WalkTree(knownShare); }
+                        catch (Exception e)
+                        {
+                            Mq.Error("Exception in TreeWalker task for share " + knownShare);
+                            Mq.Error(e.ToString());
+                        }
+                    });
+                }
+                return;
+            }
+
             // find the shares
             HostShareInfo[] hostShareInfos = GetHostShareInfo(computer);
 
@@ -183,6 +204,7 @@ namespace SnaffCore.ShareFind
 
                             if (MyOptions.ScanFoundShares)
                             {
+                                checkpoint.RecordShare(computer, shareResult.SharePath);
                                 Mq.Trace("Creating a TreeWalker task for " + shareResult.SharePath);
                                 TreeTaskScheduler.New(() =>
                                 {
@@ -206,6 +228,7 @@ namespace SnaffCore.ShareFind
                     }
                 }
             }
+            checkpoint.MarkComputer(computer);
         }
 
         internal bool IsShareReadable(string share)

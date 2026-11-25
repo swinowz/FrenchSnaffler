@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directories:
+      - /SnaffCore
+      - /Snaffler
+      - /tests/CloudRulesRegression
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      shared-dependencies:
+        patterns:
+          - "*"
+        group-by: dependency-name

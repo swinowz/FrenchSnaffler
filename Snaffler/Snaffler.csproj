@@ -41,4 +41,12 @@
     <EmbeddedResource Include="SnaffRules\DefaultRules\**\*.toml" />
   </ItemGroup>
 
+  <!-- Native packages (SkiaSharp via EPPlus) ship a large .pdb; keep it out of release output. -->
+  <Target Name="RemoveStrayNativePdb" AfterTargets="Publish">
+    <ItemGroup>
+      <_StrayPdb Include="$(PublishDir)**\*.pdb" />
+    </ItemGroup>
+    <Delete Files="@(_StrayPdb)" />
+  </Target>
+
 </Project>

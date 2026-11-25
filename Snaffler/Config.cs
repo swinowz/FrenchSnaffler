@@ -277,17 +277,23 @@ namespace ShareAuditor
                     parsedConfig.MaxThreads = maxThreadsArg.Value;
                 }
                 
-                // If no -x specified, default to 100 threads
+                // If no -x specified, choose a safe default from CPU, memory,
+                // and whether this is a local or SMB scan.
                 if (parsedConfig.MaxThreads <= 0)
                 {
-                    parsedConfig.MaxThreads = 100;
+                    parsedConfig.MaxThreads = SnaffCore.Concurrency.AdaptiveConcurrency.Calculate(
+                        parsedConfig.PathTargets, parsedConfig.ComputerTargets);
+                    Mq.Info($"Adaptive concurrency selected {parsedConfig.MaxThreads} workers");
                 }
 
                 // Allocate more threads to FileScanner since that's the bottleneck
                 // Share: 10%, Tree: 20%, File: 70%
                 parsedConfig.ShareThreads = Math.Max(1, parsedConfig.MaxThreads / 10);
                 parsedConfig.TreeThreads = Math.Max(1, parsedConfig.MaxThreads / 5);
-                parsedConfig.FileThreads = parsedConfig.MaxThreads - parsedConfig.ShareThreads - parsedConfig.TreeThreads;
+                // Keep every scheduler constructible, including custom rulesets
+                // that contain only file/archive rules and small explicit -x values.
+                parsedConfig.FileThreads = Math.Max(1,
+                    parsedConfig.MaxThreads - parsedConfig.ShareThreads - parsedConfig.TreeThreads);
                 
                 // Increase .NET ThreadPool limits to handle high concurrency
                 System.Threading.ThreadPool.SetMinThreads(parsedConfig.MaxThreads, parsedConfig.MaxThreads);

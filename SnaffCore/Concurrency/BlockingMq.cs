@@ -22,6 +22,7 @@ namespace SnaffCore.Concurrency
         private int _findingsCount = 0;
         private int _filesProcessed = 0;
         private int _currentRow = 2; // Start after header row
+        private readonly ConcurrentDictionary<string, byte> _reportedFindingKeys = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         
         // Track written credentials to avoid duplicates
         private System.Collections.Generic.HashSet<string> _writtenCredentials = new System.Collections.Generic.HashSet<string>();
@@ -31,11 +32,9 @@ namespace SnaffCore.Concurrency
         /// </summary>
         public void TriggerGarbageCollection(int totalFilesProcessed)
         {
+            // NEUTRALISE : le GC Gen2 bloquant + compaction LOH forces figeaient tous les threads.
+            // On laisse le runtime (Server GC + DATAS) gerer la memoire.
             _filesProcessed = totalFilesProcessed;
-            
-            // Force Gen2 collection with compaction
-            System.GC.Collect(2, System.GCCollectionMode.Forced, true, true);
-            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
         }
 
         public static void MakeMq()
@@ -142,6 +141,15 @@ namespace SnaffCore.Concurrency
 
         public void FileResult(FileResult fileResult)
         {
+            // Multiple relay rules can identify the same evidence. Keep one
+            // report row/message per file + matched value while preserving
+            // distinct evidence in the same file.
+            string evidence = fileResult?.TextResult?.MatchedValue;
+            if (string.IsNullOrEmpty(evidence)) evidence = fileResult?.TextResult?.MatchContext;
+            if (string.IsNullOrEmpty(evidence)) evidence = fileResult?.MatchedRule?.RuleName;
+            string findingKey = (fileResult?.FileInfo?.FullName ?? "") + "\u001f" + evidence;
+            if (!_reportedFindingKeys.TryAdd(findingKey, 0)) return;
+
             // DIRECT EXCEL WRITE - no memory accumulation
             if (_excelPackage != null)
             {
@@ -311,9 +319,18 @@ namespace SnaffCore.Concurrency
                     fileResult.TextResult.MatchedStrings = null;
                 }
             }
-            
-            // Don't add to console queue - CSV has everything we need
-            // This prevents memory buildup from FileResult objects in the message queue
+            else
+            {
+                // Normal console/TSV/JSON output still consumes findings through Q.
+                // The Excel fast path intentionally bypasses Q, but dropping results
+                // when Excel is not enabled makes every non-Excel output appear empty.
+                Q.Add(new SnafflerMessage
+                {
+                    DateTime = DateTime.Now,
+                    FileResult = fileResult,
+                    Type = SnafflerMessageType.FileResult
+                });
+            }
         }
         
         private class CredentialEntry
@@ -325,7 +342,7 @@ namespace SnaffCore.Concurrency
         }
         
         /// <summary>
-        /// Extract hostname from UNC path or drive letter path
+        /// Extract hostname/username from UNC path or user profile path
         /// </summary>
         private string ExtractHostname(string filePath)
         {
@@ -344,7 +361,34 @@ namespace SnaffCore.Concurrency
                 return filePath.Substring(firstSlash);
             }
             
-            // Local path or mapped drive - return "localhost" or extract computer name
+            // Try to extract username from common path patterns
+            // F:\Documents\username\...
+            // C:\Users\username\...
+            // D:\Profiles\username\...
+            var userPatterns = new[]
+            {
+                @"[A-Z]:\\Documents\\([^\\]+)\\",
+                @"[A-Z]:\\Users\\([^\\]+)\\",
+                @"[A-Z]:\\Profiles\\([^\\]+)\\",
+                @"[A-Z]:\\Home\\([^\\]+)\\",
+                @"[A-Z]:\\Utilisateurs\\([^\\]+)\\"
+            };
+
+            foreach (var pattern in userPatterns)
+            {
+                var match = Regex.Match(filePath, pattern, RegexOptions.IgnoreCase);
+                if (match.Success && match.Groups.Count > 1)
+                {
+                    string username = match.Groups[1].Value;
+                    // Skip common system folders
+                    if (!Regex.IsMatch(username, @"^(Public|Default|All Users|Default User)$", RegexOptions.IgnoreCase))
+                    {
+                        return username;
+                    }
+                }
+            }
+
+            // Fallback to machine name
             return Environment.MachineName ?? "localhost";
         }
         
@@ -802,6 +846,14 @@ namespace SnaffCore.Concurrency
             {
                 lock (_excelLock)
                 {
+                    // Create Excel Table with filters if we have data
+                    if (_currentRow > 2) // More than just the header
+                    {
+                        var tableRange = _worksheet.Cells[1, 1, _currentRow - 1, 9];
+                        var table = _worksheet.Tables.Add(tableRange, "FindingsTable");
+                        table.TableStyle = OfficeOpenXml.Table.TableStyles.Medium2;
+                    }
+
                     // Auto-fit columns for readability
                     _worksheet.Cells[_worksheet.Dimension.Address].AutoFitColumns();
                     

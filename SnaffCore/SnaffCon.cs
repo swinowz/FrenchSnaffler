@@ -153,9 +153,11 @@ namespace SnaffCore
             DateTime scanStart = DateTime.Now;
             int stuckCounter = 0;
             int lastStuckCount = 0;
-            
+            int pollIterations = 0;
+
             while (true)
             {
+                pollIterations++;
                 ShareTaskScheduler.Scheduler.RecalculateCounters();
                 TreeTaskScheduler.Scheduler.RecalculateCounters();
                 FileTaskScheduler.Scheduler.RecalculateCounters();
@@ -195,7 +197,8 @@ namespace SnaffCore
                 long ramBytes = System.GC.GetTotalMemory(false);
                 double ramMB = ramBytes / 1024.0 / 1024.0;
                 
-                if (totalQueued > 0 || totalRunning > 0)
+                // On sonde toutes les 2s (completion rapide) mais on n'imprime le Progress qu'~toutes les 20s
+                if ((totalQueued > 0 || totalRunning > 0) && (pollIterations % 10 == 1))
                 {
                     Mq.Info($"Progress: {totalQueued} queued, {totalRunning} active, {completed} done | {avgRate:F0} files/min{etaStr} | RAM: {ramMB:F0}MB");
                 }
@@ -205,7 +208,7 @@ namespace SnaffCore
                 if (totalQueued == 0 && totalRunning > 0 && totalRunning == lastStuckCount)
                 {
                     stuckCounter++;
-                    if (stuckCounter >= 3) // 3 minutes of being stuck
+                    if (stuckCounter >= 90) // ~180s bloque (poll = 2s) avant d'abandonner les t*ches figees
                     {
                         Mq.Info($"Abandoning {totalRunning} stuck file scans (network I/O timeout). Scan complete.");
                         break;
@@ -226,7 +229,7 @@ namespace SnaffCore
                     break;
                 }
                 
-                Thread.Sleep(20000); // Check every 20 seconds
+                Thread.Sleep(2000); // Sonde toutes les 2s (avant : 20s => plancher de latence enorme sur petits scans)
             }
 
             StatusUpdate();
@@ -349,7 +352,7 @@ namespace SnaffCore
                             // Use the null character to match begin and end of line
                             string pattern = "(| |'|\")" + Regex.Escape(user) + "(| |'|\")";
                             Regex regex = new Regex(pattern,
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(2));
                             configClassifierRule.Regexes.Add(regex);
                             Mq.Trace(String.Format("Adding regex {0} to rule {1}", regex, ruleName));
                         }

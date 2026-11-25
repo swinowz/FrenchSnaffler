@@ -404,6 +404,8 @@ namespace ShareAuditor
                     if (Options.LogType == LogType.JSON) 
                     {
                         Logger.Info("Normalising output, please wait...");
+                        LogManager.Flush(TimeSpan.FromSeconds(5));
+                        LogManager.Shutdown();
                         FixJSONOutput();
                     }
                     break;
@@ -608,29 +610,27 @@ namespace ShareAuditor
         //This is probably slow but it is a quick and easy fix for now.
         private void FixJSONOutput() 
         {
+            if (!File.Exists(Options.LogFilePath)) return;
             //Rename the log file temporarily
             File.Move(Options.LogFilePath, Options.LogFilePath + ".tmp");
-            //Prepare the normalised file
-            StreamWriter file = new StreamWriter(Options.LogFilePath);
-            //Read in the original log file to an array
-            string[] lines = System.IO.File.ReadAllLines(Options.LogFilePath + ".tmp");
-            //Write the surrounding template that we need.
-            file.Write("{\"entries\": [\n");
-            //Write all the lines into the new file but add a comma after all but the last so it becomes valid JSON.
-            for (int ii = 0; ii < lines.Length -1; ii++)
+            try
             {
-                file.WriteLine(lines[ii] + ",");
+                string[] lines = System.IO.File.ReadAllLines(Options.LogFilePath + ".tmp");
+                using (StreamWriter file = new StreamWriter(Options.LogFilePath))
+                {
+                    file.Write("{\"entries\": [\n");
+                    for (int ii = 0; ii < lines.Length; ii++)
+                    {
+                        if (ii > 0) file.WriteLine(",");
+                        file.Write(lines[ii]);
+                    }
+                    file.Write("\n]\n}");
+                }
             }
-            //Add the last line but without a comma
-            file.WriteLine(lines[lines.Length - 1]);
-            //Close out the file's contents with the last of the JSON to make it valid.
-            file.Write("]\n}");
-            //Flush the output
-            file.Flush();
-            //Close the file
-            file.Close();
-            //Delete the temporary file.
-            File.Delete(Options.LogFilePath + ".tmp");
+            finally
+            {
+                File.Delete(Options.LogFilePath + ".tmp");
+            }
         }
     }
 }

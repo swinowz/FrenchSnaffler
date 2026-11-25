@@ -69,7 +69,7 @@ namespace ShareAuditor
             Options parsedConfig = new Options();
 
             // define args
-            ValueArgument<string> configFileArg = new ValueArgument<string>('z', "config", "Path to a .toml config file. Run with \'generate\' to puke a sample config file into the working directory.");
+            ValueArgument<string> configFileArg = new ValueArgument<string>('z', "config", "Path to a .toml config file. Run with \'generate\' to write a sample config file (default.toml) into the working directory.");
             ValueArgument<string> outFileArg = new ValueArgument<string>('o', "outfile",
                 "Path for output file. You probably want this if you're not using -s.");
             ValueArgument<string> verboseArg = new ValueArgument<string>('v', "verbosity",
@@ -81,7 +81,7 @@ namespace ShareAuditor
             ValueArgument<int> interestLevel = new ValueArgument<int>('b', "interest", "Interest level to report (0-3)");
             ValueArgument<string> snaffleArg = new ValueArgument<string>('m', "collect",
                 "Enables and assigns an output dir for ShareAuditor to automatically collect a copy of any found files.");
-            ValueArgument<long> snaffleSizeArg = new ValueArgument<long>('l', "collectsize", "Maximum size of file to collect, in bytes. Defaults to 10MB.");
+            ValueArgument<long> snaffleSizeArg = new ValueArgument<long>('l', "collectsize", "Maximum size of file to collect, in bytes. Defaults to 10000000 (10MB).");
             //var fileHuntArg = new SwitchArgument('f', "filehuntoff",
             //    "Disables file discovery, will only perform computer and share discovery.", false);
             ValueArgument<string> dirTargetArg = new ValueArgument<string>('i', "dirtarget",
@@ -91,7 +91,7 @@ namespace ShareAuditor
             ValueArgument<string> domainControllerArg = new ValueArgument<string>('c', "domaincontroller",
                 "Domain controller to query for a list of domain computers.");
             ValueArgument<long> maxGrepSizeArg = new ValueArgument<long>('r', "maxgrepsize",
-                "The maximum size file (in bytes) to search inside for interesting strings. Defaults to 500k.");
+                "The maximum size file (in bytes) to search inside for interesting strings. Defaults to 1000000 (1MB).");
             ValueArgument<int> grepContextArg = new ValueArgument<int>('j', "grepcontext",
                 "How many bytes of context either side of found strings in files to show, e.g. -j 200");
             SwitchArgument domainUserArg = new SwitchArgument('u', "domainusers", "Makes ShareAuditor grab a list of interesting-looking accounts from the domain and uses them in searches.", false);
@@ -103,7 +103,7 @@ namespace ShareAuditor
             ValueArgument<string> compExclusionArg = new ValueArgument<string>('k', "exclusions", "Path to a file containing a list of computers to exclude from scanning.");
             ValueArgument<string> compTargetArg = new ValueArgument<string>('n', "comptarget", "List of computers in a file(e.g C:\targets.txt), a single Computer (or comma separated list) to target.");
             ValueArgument<string> ruleDirArg = new ValueArgument<string>('p', "rulespath", "Path to a directory full of toml-formatted rules. ShareAuditor will load all of these in place of the default ruleset.");
-            ValueArgument<string> logType = new ValueArgument<string>('t', "logtype", "Type of log you would like to output. Currently supported options are plain and JSON. Defaults to plain.");
+            ValueArgument<string> logType = new ValueArgument<string>('t', "logtype", "Output format: 'plain' (default), 'json' (use -o for the finalised file), or 'auto' for the .xlsx report with credential extraction. Tab-separated plain output is a separate switch, -y.");
             ValueArgument<string> testFileArg = new ValueArgument<string>('w', "testfile", "Test credential extraction methods on a specific file. Outputs method results to console only.");
             ValueArgument<string> timeOutArg = new ValueArgument<string>('e', "timeout",
                 "Interval between status updates (in minutes) also acts as a timeout for AD data to be gathered via LDAP. Turn this knob up if you aren't getting any computers from AD when you run ShareAuditor through a proxy or other slow link. Default = 5");

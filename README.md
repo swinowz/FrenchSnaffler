@@ -128,7 +128,7 @@ Les dossiers de sortie doivent exister. Avec `-t auto -o "C:\Audit\rapport.log"`
 | `--checkpoint <fichier>` | Reprise d’un scan interrompu : relancer exactement la même commande. Les dossiers à moitié traités sont rescannés ; les résultats de la reprise vont dans `<sortie>-resume-N`. |
 | `-w <fichier>` | Diagnostic de l’extraction d’identifiants sur un fichier. Pour les classeurs, ce diagnostic lit les données brutes et ne remplace pas un scan bureautique complet. |
 
-Certains textes de l’aide intégrée sont encore historiques, notamment la limite de contenu annoncée à 500 Ko et la liste des formats de sortie. Les valeurs ci-dessus correspondent au code actuel.
+Les valeurs ci-dessus correspondent au code actuel et à l’aide intégrée (`-h`).
 
 ## Lire le rapport Excel
 

@@ -364,3 +364,47 @@ MigrationBackup/
 
 # Custom build output folder
 Compiled-Ultra/
+
+# ShareAuditor: local audit data and credentials (keep outside version control)
+# Root-anchored patterns preserve the deliberately named snafflertest fixtures.
+/*.bak
+/*.old
+**/*.csproj.bak
+**/*.csproj.old
+/.env
+/.env.*
+!/.env.example
+/default.toml
+/*.local.toml
+/targets.txt
+/exclusions.txt
+/paths.txt
+/reports/
+/findings/
+/collected/
+/output/
+/audit-output/
+/local-config/
+/backup-source-*/
+/publish-*/
+/*.xlsx
+/*.csv
+/*.tsv
+/*-results.json
+/audit*.json
+/scan*.json
+/credentials*.json
+/gitleaks*.json
+/.gitleaks-report*
+/secrets/
+/.ssh/
+/.aws/
+/id_rsa
+/id_ecdsa
+/id_ed25519
+/*.pem
+/*.key
+/*.p12
+/*.pfx
+/credentials*.txt
+/passwords*.txt

@@ -243,52 +243,79 @@ namespace SnaffCore.Classifiers
             return false;
         }
 
+        // Returns null when the file holds no certificate. Throws CryptographicException
+        // only when a password is needed (or the given one is wrong), which drives the
+        // password guessing in x509Match. Keys are ephemeral: nothing is written to the
+        // machine key store, so no temp copy or key container cleanup is needed.
+        private const long MaxCertFileBytes = 10 * 1024 * 1024;
+
         public X509Certificate2 parseCert(string certPath, string password = null)
         {
-            BlockingMq Mq = BlockingMq.GetMq();
-            // IT TURNS OUT THAT new X509Certificate2() actually writes a file to a temp path and if you
-            // don't manage it yourself it hits 65,000 temp files and hangs.
+            if (new FileInfo(certPath).Length > MaxCertFileBytes) return null;
+            byte[] data = File.ReadAllBytes(certPath);
 
-            var tempfile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-            File.Copy(certPath, tempfile);
-            X509Certificate2 parsedCert = null;
+            if (LooksLikePem(data))
+            {
+                string pem = Encoding.UTF8.GetString(data);
+                bool hasCert = pem.Contains("-----BEGIN CERTIFICATE-----");
+                bool hasKey = pem.Contains("PRIVATE KEY-----");
+                bool encryptedKey = pem.Contains("-----BEGIN ENCRYPTED PRIVATE KEY-----");
+                if (!hasCert) return null;
+                X509Certificate2 publicOnly = X509Certificate2.CreateFromPem(pem);
+                if (!hasKey) return publicOnly;
+                if (encryptedKey)
+                {
+                    if (password == null) throw new CryptographicException("Encrypted private key requires a password");
+                    publicOnly.Dispose();
+                    return X509Certificate2.CreateFromEncryptedPem(pem, pem, password);
+                }
+                try
+                {
+                    X509Certificate2 withKey = X509Certificate2.CreateFromPem(pem, pem);
+                    publicOnly.Dispose();
+                    return withKey;
+                }
+                catch (CryptographicException)
+                {
+                    // key present but unreadable or not matching the certificate
+                    return publicOnly;
+                }
+            }
 
+            switch (X509Certificate2.GetCertContentType(data))
+            {
+                case X509ContentType.Pfx:
+                    return X509CertificateLoader.LoadPkcs12(data, password, X509KeyStorageFlags.EphemeralKeySet);
+                case X509ContentType.Cert:
+                    return X509CertificateLoader.LoadCertificate(data);
+                default:
+                    return null;
+            }
+        }
+
+        // PEM private key without certificate (key.pem, server.pem): a secret on its own.
+        private static bool IsBarePemPrivateKey(string certPath)
+        {
             try
             {
-                if (Path.GetExtension(certPath) == ".pem")
-                {
-                    string pemstring = File.ReadAllText(tempfile);
-                    byte[] certBuffer = Helpers.GetBytesFromPEM(pemstring, PemStringType.Certificate);
-                    byte[] keyBuffer = Helpers.GetBytesFromPEM(pemstring, PemStringType.RsaPrivateKey);
-
-                    if (certBuffer != null)
-                    {
-                        parsedCert = new X509Certificate2(certBuffer);
-                        if (keyBuffer != null)
-                        {
-                            RSACryptoServiceProvider prov = Crypto.DecodeRsaPrivateKey(keyBuffer);
-                            parsedCert.PrivateKey = prov;
-                        }
-                    }
-                    else
-                    {
-                        Mq.Error("Failure parsing " + certPath);
-                    }
-                }
-                else
-                {
-                    parsedCert = new X509Certificate2(tempfile, password);
-                }
+                if (new FileInfo(certPath).Length > MaxCertFileBytes) return false;
+                byte[] data = File.ReadAllBytes(certPath);
+                if (!LooksLikePem(data)) return false;
+                string pem = Encoding.UTF8.GetString(data);
+                return pem.Contains("PRIVATE KEY-----") && !pem.Contains("-----BEGIN CERTIFICATE-----");
             }
-            catch (Exception e)
-            {
-                File.Delete(tempfile);
-                throw e;
-            }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+        }
 
-            File.Delete(tempfile);
-
-            return parsedCert;
+        private static bool LooksLikePem(byte[] data)
+        {
+            int limit = Math.Min(data.Length, 4096);
+            for (int i = 0; i + 10 < limit; i++)
+                if (data[i] == '-' && data[i + 1] == '-' && data[i + 2] == '-' && data[i + 3] == '-' && data[i + 4] == '-' &&
+                    data[i + 5] == 'B' && data[i + 6] == 'E' && data[i + 7] == 'G' && data[i + 8] == 'I' && data[i + 9] == 'N')
+                    return true;
+            return false;
         }
 
         public List<string> x509Match(FileInfo fileInfo)
@@ -305,9 +332,14 @@ namespace SnaffCore.Classifiers
             {
                 // try to parse it, it'll throw if it needs a password
                 parsedCert = parseCert(certPath);
-                
+
                 // if it parses we know we didn't need a password
-                nopwrequired = true;
+                nopwrequired = parsedCert != null;
+                if (parsedCert == null && IsBarePemPrivateKey(certPath))
+                {
+                    matchReasons.Add("HasPrivateKey");
+                    matchReasons.Add("PrivateKeyWithoutCertificate");
+                }
             }
             catch (CryptographicException e)
             {
@@ -325,6 +357,7 @@ namespace SnaffCore.Classifiers
                     try
                     {
                         parsedCert = parseCert(certPath, password);
+                        if (parsedCert == null) continue;
                         if (password == "")
                         {
                             matchReasons.Add("PasswordBlank");
@@ -333,6 +366,7 @@ namespace SnaffCore.Classifiers
                         {
                             matchReasons.Add("PasswordCracked: " + password);
                         }
+                        break;
                     }
                     catch (CryptographicException ee)
                     {

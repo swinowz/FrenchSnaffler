@@ -1,0 +1,10 @@
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "EnterArchivesByExtension"
+MatchAction = "EnterArchive"
+Description = "Inspect archive contents and report encrypted archives for manual review."
+MatchLocation = "FileExtension"
+WordListType = "Exact"
+MatchLength = 0
+WordList = ["\\.zip", "\\.7z", "\\.rar", "\\.tar", "\\.gz", "\\.tgz", "\\.bz2", "\\.xz"]
+Triage = "Yellow"

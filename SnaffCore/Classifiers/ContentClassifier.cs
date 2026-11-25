@@ -69,12 +69,15 @@ namespace SnaffCore.Classifiers
 #endif
                                 TextClassifier textClassifier = new TextClassifier(ClassifierRule);
                                 TextResult textResult = textClassifier.TextMatch(fileString);
-                                if (textResult != null)
+                                if (textResult != null && !DetectionFilters.IsKnownPlaceholder(ClassifierRule, textResult))
                                 {
                                     // Store full content for Excel extraction (capped at 512KB)
-                                    textResult.FullContent = fileString.Length > 512 * 1024 
-                                        ? fileString.Substring(0, 512 * 1024) 
-                                        : fileString;
+                                    if (MyOptions.LogType == SnaffCore.Config.LogType.Auto)
+                                    {
+                                        textResult.FullContent = fileString.Length > 512 * 1024
+                                            ? fileString.Substring(0, 512 * 1024)
+                                            : fileString;
+                                    }
                                     
                                     fileResult = new FileResult(fileInfo)
                                     {
@@ -218,8 +221,24 @@ namespace SnaffCore.Classifiers
 
         public bool ByteMatch(byte[] fileBytes)
         {
-            // TODO
-            throw new NotImplementedException(message: "Haven't implemented byte-based content searching yet lol.");
+            if (fileBytes == null || ClassifierRule?.WordList == null) return false;
+            foreach (string pattern in ClassifierRule.WordList)
+            {
+                byte[] needle = System.Text.Encoding.UTF8.GetBytes(pattern ?? "");
+                if (needle.Length == 0 || needle.Length > fileBytes.Length) continue;
+                for (int i = 0; i <= fileBytes.Length - needle.Length; i++)
+                {
+                    bool equal = true;
+                    for (int j = 0; j < needle.Length; j++)
+                        if (fileBytes[i + j] != needle[j]) { equal = false; break; }
+                    if (!equal) continue;
+                    if (ClassifierRule.WordListType == MatchListType.Exact && fileBytes.Length != needle.Length) continue;
+                    if (ClassifierRule.WordListType == MatchListType.StartsWith && i != 0) continue;
+                    if (ClassifierRule.WordListType == MatchListType.EndsWith && i != fileBytes.Length - needle.Length) continue;
+                    return true;
+                }
+            }
+            return false;
         }
     }
 }

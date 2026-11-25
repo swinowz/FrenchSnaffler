@@ -20,6 +20,29 @@ namespace SnaffCore.Classifiers
             this.ClassifierRule = inRule;
         }
 
+        // Cache nom -> regle : evite un scan lineaire .First() sur TOUTES les regles,
+        // pour chaque relais, pour chaque fichier (point chaud a l'echelle entreprise).
+        private static System.Collections.Generic.Dictionary<string, ClassifierRule> _rulesByName;
+        private static readonly object _rulesByNameLock = new object();
+        private static ClassifierRule GetRuleByName(string name)
+        {
+            if (_rulesByName == null)
+            {
+                lock (_rulesByNameLock)
+                {
+                    if (_rulesByName == null)
+                    {
+                        var d = new System.Collections.Generic.Dictionary<string, ClassifierRule>();
+                        foreach (var r in MyOptions.ClassifierRules) d[r.RuleName] = r;
+                        _rulesByName = d;
+                    }
+                }
+            }
+            return _rulesByName.TryGetValue(name, out var rule)
+                ? rule
+                : MyOptions.ClassifierRules.First(thing => thing.RuleName == name);
+        }
+
         public bool ClassifyFile(FileInfo fileInfo)
         {
             BlockingMq Mq = BlockingMq.GetMq();
@@ -116,7 +139,7 @@ namespace SnaffCore.Classifiers
                 case MatchAction.CheckForKeys:
                     // do a special x509 dance
                     List<string> x509MatchReason = x509Match(fileInfo);
-                    if (x509MatchReason.Count >= 0)
+                    if (x509MatchReason.Count > 0)
                     {
                         // if there were any matchreasons, cat them together...
                         string matchContext = String.Join(",", x509MatchReason);
@@ -148,8 +171,7 @@ namespace SnaffCore.Classifiers
                         
                         foreach (string relayTarget in ClassifierRule.RelayTargets)
                         {
-                            ClassifierRule nextRule =
-                                MyOptions.ClassifierRules.First(thing => thing.RuleName == relayTarget);
+                            ClassifierRule nextRule = GetRuleByName(relayTarget);
 
                             if (nextRule.EnumerationScope == EnumerationScope.ContentsEnumeration)
                             {
@@ -185,8 +207,7 @@ namespace SnaffCore.Classifiers
                         // Process file-based targets normally
                         foreach (string fileTarget in fileTargets)
                         {
-                            ClassifierRule nextRule =
-                                MyOptions.ClassifierRules.First(thing => thing.RuleName == fileTarget);
+                            ClassifierRule nextRule = GetRuleByName(fileTarget);
                             FileClassifier nextFileClassifier = new FileClassifier(nextRule);
                             nextFileClassifier.ClassifyFile(fileInfo);
                         }
@@ -206,8 +227,8 @@ namespace SnaffCore.Classifiers
                 case MatchAction.EnterArchive:
                     // do a special looking inside archive files dance using
                     // https://github.com/adamhathcock/sharpcompress
-                    // TODO FUUUUUCK
-                    throw new NotImplementedException("Haven't implemented walking dir structures inside archives.");
+                    ArchiveClassifier.Scan(fileInfo);
+                    return false;
                 default:
                     Mq.Error("You've got a misconfigured file ClassifierRule named " + ClassifierRule.RuleName + ".");
                     return false;
@@ -294,11 +315,12 @@ namespace SnaffCore.Classifiers
                 Mq.Trace(e.ToString());
 
                 // build the list of passwords to try including the filename
-                List<string> passwords = MyOptions.CertPasswords;
+                // COPIE : ne pas aliaser/faire grossir la liste globale MyOptions.CertPasswords (fuite + O(n^2))
+                List<string> passwords = new List<string>(MyOptions.CertPasswords);
                 passwords.Add(Path.GetFileNameWithoutExtension(fileInfo.Name));
 
                 // try each of our very obvious passwords
-                foreach (string password in MyOptions.CertPasswords)
+                foreach (string password in passwords)
                 {
                     try
                     {

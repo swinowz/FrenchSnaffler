@@ -21,6 +21,16 @@ namespace SnaffCore.Classifiers
     {
         private BlockingMq Mq { get; set; } = BlockingMq.GetMq();
 
+#if ULTRASNAFFLER
+        // Statique (evite de reallouer une liste a CHAQUE fichier)
+        private static readonly System.Collections.Generic.HashSet<string> ParsedExtensions =
+            new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                ".doc",".docx",".xls",".xlsx",".eml",".msg",".pdf",".ppt",".pptx",
+                ".rtf",".docm",".xlsm",".pptm",".dot",".dotx",".dotm",".xlt",".xltm"
+            };
+#endif
+
         /// <summary>
         /// Reads file content once and applies all specified rules.
         /// Significantly faster than calling ContentClassifier multiple times.
@@ -88,13 +98,7 @@ namespace SnaffCore.Classifiers
             {
 #if ULTRASNAFFLER
                 // Parse office documents and PDFs to text
-                List<string> parsedExtensions = new List<string>()
-                {
-                    ".doc",".docx",".xls",".xlsx",".eml",".msg",".pdf",".ppt",".pptx",
-                    ".rtf",".docm",".xlsm",".pptm",".dot",".dotx",".dotm",".xlt",".xlsm",".xltm"
-                };
-
-                if (parsedExtensions.Contains(fileInfo.Extension.ToLower()))
+                if (ParsedExtensions.Contains(fileInfo.Extension))
                 {
                     return ParseFileToString(fileInfo);
                 }
@@ -136,10 +140,18 @@ namespace SnaffCore.Classifiers
                 
                 if (textResult != null)
                 {
+                    if (DetectionFilters.IsKnownPlaceholder(rule, textResult))
+                    {
+                        Mq.Trace($"Suppressed known public placeholder for rule {rule.RuleName}: {textResult.MatchedValue}");
+                        continue;
+                    }
                     // Cap full content at 512KB for Excel export
-                    textResult.FullContent = fileString.Length > 512 * 1024 
-                        ? fileString.Substring(0, 512 * 1024) 
-                        : fileString;
+                    if (MyOptions.LogType == SnaffCore.Config.LogType.Auto)
+                    {
+                        textResult.FullContent = fileString.Length > 512 * 1024
+                            ? fileString.Substring(0, 512 * 1024)
+                            : fileString;
+                    }
                     
                     var fileResult = new FileResult(fileInfo)
                     {
@@ -178,10 +190,24 @@ namespace SnaffCore.Classifiers
 
         private bool ByteMatch(byte[] fileBytes, ClassifierRule rule)
         {
-            // Implementation from original ContentClassifier
-            // Check if byte pattern matches
-            // TODO: Copy from ContentClassifier.ByteMatch()
-            return false; // Placeholder
+            if (fileBytes == null || rule?.WordList == null) return false;
+            foreach (string pattern in rule.WordList)
+            {
+                byte[] needle = System.Text.Encoding.UTF8.GetBytes(pattern ?? "");
+                if (needle.Length == 0 || needle.Length > fileBytes.Length) continue;
+                for (int i = 0; i <= fileBytes.Length - needle.Length; i++)
+                {
+                    bool equal = true;
+                    for (int j = 0; j < needle.Length; j++)
+                        if (fileBytes[i + j] != needle[j]) { equal = false; break; }
+                    if (!equal) continue;
+                    if (rule.WordListType == MatchListType.Exact && fileBytes.Length != needle.Length) continue;
+                    if (rule.WordListType == MatchListType.StartsWith && i != 0) continue;
+                    if (rule.WordListType == MatchListType.EndsWith && i != fileBytes.Length - needle.Length) continue;
+                    return true;
+                }
+            }
+            return false;
         }
 
         private bool SizeMatch(FileInfo fileInfo, ClassifierRule rule)
@@ -198,59 +224,45 @@ namespace SnaffCore.Classifiers
             {
                 string ext = fileInfo.Extension.ToLower();
                 
-                // For .xlsx files, use ClosedXML directly (no Task.Run to avoid thread pool starvation)
-                if (ext == ".xlsx" || ext == ".xlsm")
+                // Excel (xlsx/xlsm/xls/xlt...) : lecture STREAMING via ExcelDataReader
+                // (pas de DOM complet en memoire comme ClosedXML/Toxy -> gros gain RAM avec bcp de threads).
+                if (ext == ".xlsx" || ext == ".xlsm" || ext == ".xls" || ext == ".xlt" || ext == ".xltx" || ext == ".xltm")
                 {
                     try
                     {
-                        string result = ParseXlsxWithClosedXML(fileInfo.FullName);
-                        if (result == "[PASSWORD_PROTECTED]")
-                        {
-                            ReportPasswordProtectedFile(fileInfo);
-                            return "";
-                        }
+                        string result = ParseExcelStreaming(fileInfo.FullName);
                         if (!string.IsNullOrEmpty(result))
                             return result;
                     }
                     catch (Exception ex)
                     {
-                        // Silently handle - errors logged at trace level
-                        Mq.Trace($"XLSX parse failed for {fileInfo.Name}: {ex.Message}");
-                    }
-                    
-                    // Fallback to text parser
-                    return ParseWithTextParser(fileInfo);
-                }
-                
-                // For old .xls files, use Toxy SpreadsheetParser directly
-                if (ext == ".xls" || ext == ".xlt" || ext == ".xltx" || ext == ".xltm")
-                {
-                    try
-                    {
-                        ParserContext context = new ParserContext(fileInfo.FullName);
-                        ISpreadsheetParser spreadsheetParser = ParserFactory.CreateSpreadsheet(context);
-                        ToxySpreadsheet spreadsheet = spreadsheetParser.Parse();
-                        string result = ConvertSpreadsheetToTabDelimited(spreadsheet);
-                        
-                        if (!string.IsNullOrEmpty(result) && result.Contains("\t"))
-                            return result;
-                    }
-                    catch (Exception ex)
-                    {
-                        // Only report as password-protected if error explicitly says so
                         string msg = ex.Message?.ToLower() ?? "";
-                        if (msg.Contains("password") || msg.Contains("encrypted"))
+                        string exType = ex.GetType().Name.ToLower();
+                        if (msg.Contains("password") || msg.Contains("encrypted") || msg.Contains("encryption") ||
+                            exType.Contains("crypto"))
                         {
                             ReportPasswordProtectedFile(fileInfo);
                             return "";
                         }
-                        Mq.Trace($"XLS parse failed for {fileInfo.Name}: {ex.Message}");
+                        Mq.Trace($"Excel stream parse failed for {fileInfo.Name}: {ex.Message}");
                     }
-                    
                     // Fallback to text parser
                     return ParseWithTextParser(fileInfo);
                 }
                 
+                // .docx / .docm / .dotx : extraction RAPIDE via OpenXML (lecture zip directe)
+                // au lieu de Toxy (DOM complet en memoire, lib non maintenue).
+                if (ext == ".docx" || ext == ".docm" || ext == ".dotx" || ext == ".dotm")
+                {
+                    try
+                    {
+                        string dresult = ParseDocxFast(fileInfo.FullName);
+                        if (!string.IsNullOrEmpty(dresult)) return dresult;
+                    }
+                    catch (Exception ex) { Mq.Trace($"DOCX fast parse failed for {fileInfo.Name}: {ex.Message}"); }
+                    return ParseWithTextParser(fileInfo); // repli sur Toxy
+                }
+
                 // For all other documents, use text parser
                 return ParseWithTextParser(fileInfo);
             }
@@ -258,6 +270,36 @@ namespace SnaffCore.Classifiers
             {
                 return "";
             }
+        }
+
+        // Extraction texte docx sans DOM : ouvre le zip, lit word/document.xml (+ headers/footers),
+        // preserve la structure des tableaux (cellule -> tab, ligne/paragraphe -> newline) puis retire les balises.
+        private string ParseDocxFast(string filePath)
+        {
+            var sb = new System.Text.StringBuilder();
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(filePath))
+            {
+                foreach (var entry in zip.Entries)
+                {
+                    if (!entry.FullName.StartsWith("word/", System.StringComparison.OrdinalIgnoreCase)) continue;
+                    string n = entry.Name.ToLowerInvariant();
+                    if (!n.EndsWith(".xml")) continue;
+                    if (n != "document.xml" && !n.StartsWith("header") && !n.StartsWith("footer")) continue;
+
+                    using (var s = entry.Open())
+                    using (var r = new System.IO.StreamReader(s))
+                    {
+                        string xml = r.ReadToEnd();
+                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "</w:tc>", "\t");
+                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "</w:tr>", "\n");
+                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "</w:p>", "\n");
+                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "<[^>]+>", "");
+                        sb.Append(System.Net.WebUtility.HtmlDecode(xml));
+                        sb.Append('\n');
+                    }
+                }
+            }
+            return sb.ToString();
         }
         
         /// <summary>
@@ -302,6 +344,37 @@ namespace SnaffCore.Classifiers
             Mq.FileResult(fileResult);
         }
         
+        // Lecture Excel en STREAMING (xlsx ET xls) via ExcelDataReader : ligne par ligne, sans DOM complet.
+        // Sortie tab-delimited (identique a l'ancien parseur) pour l'extraction de creds.
+        private static bool _codePagesRegistered = false;
+        private string ParseExcelStreaming(string filePath)
+        {
+            if (!_codePagesRegistered)
+            {
+                System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+                _codePagesRegistered = true;
+            }
+            var sb = new System.Text.StringBuilder();
+            using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = ExcelDataReader.ExcelReaderFactory.CreateReader(stream))
+            {
+                do
+                {
+                    while (reader.Read())
+                    {
+                        for (int i = 0; i < reader.FieldCount; i++)
+                        {
+                            if (i > 0) sb.Append('\t');
+                            object v = reader.GetValue(i);
+                            if (v != null) sb.Append(v.ToString());
+                        }
+                        sb.Append('\n');
+                    }
+                } while (reader.NextResult());
+            }
+            return sb.ToString();
+        }
+
         /// <summary>
         /// Parse .xlsx file using ClosedXML - fast and reliable
         /// </summary>

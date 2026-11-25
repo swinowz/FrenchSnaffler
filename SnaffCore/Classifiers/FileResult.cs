@@ -20,7 +20,7 @@ namespace SnaffCore.Classifiers
             //this.RwStatus = effPerms.CanRw(fileInfo);
             try
             {
-                File.OpenRead(fileInfo.FullName);
+                using (File.OpenRead(fileInfo.FullName)) { }
                 this.RwStatus = new RwStatus() { CanRead = true, CanModify = false, CanWrite = false };
             }
             catch (Exception e)

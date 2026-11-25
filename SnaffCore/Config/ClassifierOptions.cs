@@ -34,7 +34,7 @@ namespace SnaffCore.Config
                         foreach (string pattern in classifierRule.WordList)
                         {
                             classifierRule.Regexes.Add(new Regex(pattern,
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(2)));
                         }
 
                         break;
@@ -43,7 +43,7 @@ namespace SnaffCore.Config
                         foreach (string pattern in classifierRule.WordList)
                         {
                             classifierRule.Regexes.Add(new Regex(pattern,
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(2)));
                         }
 
                         break;
@@ -51,7 +51,7 @@ namespace SnaffCore.Config
                         foreach (string pattern in classifierRule.WordList)
                         {
                             classifierRule.Regexes.Add(new Regex(pattern + "$",
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(2)));
                         }
 
                         break;
@@ -59,7 +59,7 @@ namespace SnaffCore.Config
                         foreach (string pattern in classifierRule.WordList)
                         {
                             classifierRule.Regexes.Add(new Regex("^" + pattern,
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(2)));
                         }
 
                         break;
@@ -67,7 +67,7 @@ namespace SnaffCore.Config
                         foreach (string pattern in classifierRule.WordList)
                         {
                             classifierRule.Regexes.Add(new Regex("^" + pattern + "$",
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(2)));
                         }
 
                         break;

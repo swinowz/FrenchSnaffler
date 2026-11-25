@@ -5,7 +5,6 @@ using NLog.Targets;
 using SnaffCore;
 using SnaffCore.Concurrency;
 using SnaffCore.Config;
-using SnaffCore.ExcelExport;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -22,7 +21,6 @@ namespace ShareAuditor
         private BlockingMq Mq { get; set; }
         private LogLevel LogLevel { get; set; }
         private Options Options { get; set; }
-        private ExcelReportGenerator _excelReportGenerator;
 
         private string _hostString;
 
@@ -172,7 +170,7 @@ namespace ShareAuditor
                     else if (Options.LogType == LogType.JSON)
                     {
                         var eventProperties = new JsonLayout();
-                        eventProperties.IncludeAllProperties = true;
+                        eventProperties.IncludeEventProperties = true;
                         eventProperties.MaxRecursionLimit = 5;
                         var jsonLayout = new JsonLayout
                         {
@@ -406,7 +404,7 @@ namespace ShareAuditor
                         Logger.Info("Normalising output, please wait...");
                         LogManager.Flush(TimeSpan.FromSeconds(5));
                         LogManager.Shutdown();
-                        FixJSONOutput();
+                        JsonReport.Normalize(Options.LogFilePath);
                     }
                     break;
             }
@@ -607,30 +605,5 @@ namespace ShareAuditor
             Console.WriteLine("\n");
         }
 
-        //This is probably slow but it is a quick and easy fix for now.
-        private void FixJSONOutput() 
-        {
-            if (!File.Exists(Options.LogFilePath)) return;
-            //Rename the log file temporarily
-            File.Move(Options.LogFilePath, Options.LogFilePath + ".tmp");
-            try
-            {
-                string[] lines = System.IO.File.ReadAllLines(Options.LogFilePath + ".tmp");
-                using (StreamWriter file = new StreamWriter(Options.LogFilePath))
-                {
-                    file.Write("{\"entries\": [\n");
-                    for (int ii = 0; ii < lines.Length; ii++)
-                    {
-                        if (ii > 0) file.WriteLine(",");
-                        file.Write(lines[ii]);
-                    }
-                    file.Write("\n]\n}");
-                }
-            }
-            finally
-            {
-                File.Delete(Options.LogFilePath + ".tmp");
-            }
-        }
     }
 }

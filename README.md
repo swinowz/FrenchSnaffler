@@ -1,300 +1,198 @@
-# Snaffler 
+# ShareAuditor
 
-![A dictionary definition of "snaffle".](./snaffler.png)
+**Repérer les identifiants et fichiers sensibles accessibles dans les partages Windows, puis produire un rapport exploitable.**
 
-## What is it for? 
+ShareAuditor est la version développée par **swinowz** à partir de [Snaffler](https://github.com/SnaffCon/Snaffler). Le projet conserve son moteur de découverte Active Directory/SMB et ses règles TOML, mais évolue vers un outil d’audit centré sur l’extraction d’identifiants, les documents bureautiques, les règles francophones et le reporting Excel.
 
-Snaffler is a tool for **pentesters** and **red teamers** to help find delicious candy needles (creds mostly, but it's flexible) in a bunch of horrible boring haystacks (a massive Windows/AD environment).
+Le dépôt garde son nom historique `Snaffler` ; l’exécutable produit est **`ShareAuditor.exe`**. Ce README décrit les sources de cette branche, y compris les évolutions qui peuvent ne pas encore figurer dans une version publiée.
 
-It might also be useful for other people doing other stuff, but it is explicitly NOT meant to be an "audit" tool.
+## Ce que fait l’outil
 
----
+- Découvrir des machines via Active Directory et leurs partages accessibles, ou analyser directement un dossier local ou un chemin UNC.
+- Classer les fichiers selon leur nom, leur extension, leur chemin et leur contenu, avec des règles TOML modifiables.
+- Rechercher des mots de passe, chaînes de connexion, jetons, clés privées et configurations sensibles ; exploiter aussi les termes français comme « mot de passe », « identifiant » et « utilisateur ».
+- Lire les documents Excel et Word couverts par les règles, puis tenter d’en extraire les couples utilisateur/mot de passe.
+- Produire un rapport Excel, un journal texte, du JSON ou du TSV, et copier les fichiers trouvés si l’option de collecte est activée.
 
-## 🚀 What's New in This Version?
+L’analyse utilise les droits du compte Windows courant. Une détection reste un indice à vérifier : elle ne prouve ni la validité d’un identifiant ni son niveau de privilège.
 
-This version includes several critical improvements over the original Snaffler:
+## Ce qui distingue ShareAuditor de Snaffler
 
-### 🔧 **Enhanced Task Completion Detection**
-- **Better reliability**: Fixed issues where Snaffler would exit prematurely before completing all file scans
-- **Real-time monitoring**: Added debug output showing task queue status (queued/running/completed)
-- **Polling mechanism**: Replaced problematic timer-based completion with robust polling loop
-- **Accurate counters**: Task schedulers now properly track completed work across all three phases (share discovery, tree walking, file scanning)
+Les ajouts de ce fork portent sur les points suivants ; ils s’ajoutent aux fonctions de découverte et de classification héritées.
 
-### 📈 **Excel Report Generation** 
-- **New `-t auto` flag**: Automatically generates Excel reports (.xlsx) with findings
-- **Better analysis**: Structured output perfect for reporting and sharing results with teams
-- **LogType.Auto**: New log type option specifically for Excel export functionality
+| Évolution | Apport dans ShareAuditor |
+|---|---|
+| **Rapport Excel avec `-t auto`** | Feuille `Findings`, extraction d’identifiants, aperçu du contenu, couleurs et tableau filtrable. |
+| **Signatures cloud actives** | GitHub, Google, Azure, JWT et Kubernetes via les relais par défaut ; authentification Docker dans ses fichiers de configuration. |
+| **Règles francophones** | Recherche dans les noms de fichiers, le texte et les en-têtes de tableaux de mots de passe. |
+| **Analyse de contenu groupée** | Lecture du contenu mutualisée entre plusieurs règles d’un même relais, pour réduire les lectures répétées. |
+| **Lecture bureautique retravaillée** | ExcelDataReader pour lire les classeurs ligne par ligne ; extraction directe du XML des DOCX, avec prise en compte des tableaux, en-têtes et pieds de page. |
+| **Gestion des ressources** | Files de messages bornées, contenu complet conservé seulement pour l’export Excel, fermeture de handles et suppression de collectes mémoire forcées bloquantes. |
+| **Concurrence et suivi du scan** | Choix automatique du nombre de workers, option `-x` pour le fixer, compteurs de tâches et suivi du débit, de la progression et de la mémoire. |
+| **Qualité des résultats** | Déduplication par fichier et preuve détectée, filtrage de la clé AWS d’exemple publique, corrections de l’analyse de certificats et des sorties JSON/texte. |
+| **Archives** | Implémentation de l’action `EnterArchive`, avec paramètres de profondeur, nombre d’entrées et tailles. Fonction encore à valider selon les formats. |
+| **Socle actuel** | Cible Windows x64 sous .NET 10, Server GC, GC concurrent et Tiered PGO. |
 
-### 📂 **External Rules Loading**
-- **Flexible rules**: Load custom TOML rules from external `SnaffRules/DefaultRules/` directory
-- **No recompilation**: Modify detection rules without rebuilding the entire project
-- **User-specified paths**: Use `-p <path>` to load rules from any directory
-- **Better debugging**: Detailed console output showing which rules are loaded and from where
+Ces changements visent à réduire le coût des scans et à faciliter le traitement des résultats. Aucun gain chiffré universel n’est annoncé : le débit dépend du réseau, des documents, des règles et des ressources disponibles. L’export Excel conserve le classeur en mémoire ; ce n’est pas une sortie à mémoire constante.
 
-### 🇫🇷 **French Language Support**
-- **Multi-language detection**: Now includes French keyword patterns for credential detection
-- **Extended coverage**: Detects "mot de passe", "identifiant", "utilisateur", and other French terms
+## Démarrage rapide
 
-### 🐛 **Stability Improvements**
-- Enhanced error handling in file and tree scanning operations
-- Better task scheduler queue management
-- More informative debug messages throughout the scanning process
-- Fixed completion detection logic preventing premature exits
+Depuis PowerShell, dans le dossier de publication :
 
-### 🎨 **Improved User Experience**
-- More verbose logging options showing scan progress
-- Clear indicators when tasks start and complete
-- Total file count displayed at completion
-- Better feedback during long-running operations
+```powershell
+# Aide
+.\ShareAuditor.exe -h
 
----
+# Dossier local : rapport Excel + journal texte
+.\ShareAuditor.exe -i "C:\Audit\Donnees" -t auto -o "C:\Audit\rapport.log" -s
 
-## 💡 Quick Start
+# Partage précis, avec limite de contenu portée à 5 Mo
+.\ShareAuditor.exe -i "\\SRV-FICHIERS\Commun" -t auto -o "C:\Audit\partage.log" -r 5000000 -s
 
-**TL;DR** - Don't want to read? Just run this:
+# Machines ciblées : résultat JSON
+.\ShareAuditor.exe -n "SRV-FICHIERS,SRV-ARCHIVES" -t json -o "C:\Audit\resultats.json" -s
 
-```bash
-snaffler.exe -s -o snaffler.log
+# Découverte des partages d’un domaine, sans parcourir leurs fichiers
+.\ShareAuditor.exe -d "exemple.test" -a -s
 ```
 
-But seriously, read the options below for better results! 🙃
+Les dossiers de sortie doivent exister. Avec `-t auto -o "C:\Audit\rapport.log"`, le classeur est écrit dans **`C:\Audit\rapport.xlsx`**. Utiliser un nom de journal distinct du classeur, comme dans les exemples. Sans `-o`, le nom Excel par défaut reste `Snaffler-Report-<date>-<heure>.xlsx`, dans le dossier courant.
 
----
+## Options principales
 
-## 📖 What Does It Do?
+### Périmètre
 
-**Broadly speaking** - Snaffler:
+| Option | Rôle |
+|---|---|
+| `-i <chemin>` | Analyser un dossier local ou UNC ; désactive la découverte de machines et de partages. Plusieurs chemins peuvent être séparés par des virgules. |
+| `-n <cibles>` | Une machine, une liste séparée par des virgules, ou le chemin complet d’un fichier contenant une machine par ligne. |
+| `-d <domaine>` | Domaine Active Directory à interroger. |
+| `-c <contrôleur>` | Contrôleur de domaine à interroger. |
+| `-k <fichier>` | Liste de machines à exclure. |
+| `-a` | Découvrir les partages sans parcourir leurs fichiers. |
+| `-f` | Limiter la découverte de partages à DFS. |
 
-1. 🖥️ Gets a list of Windows computers from Active Directory
-2. 🌐 Spreads out to discover accessible file shares on those computers
-3. 📁 Enumerates ALL files in readable shares
-4. 🤖 Uses **intelligent pattern matching** (regex rules + heuristics) to identify interesting files
-5. 📊 Outputs results in multiple formats including plain text, JSON, or Excel
+### Sortie et collecte
 
-> **Note**: Despite what we'd love to claim, it doesn't use actual ML - just really good pattern matching with lots of `if` statements and regexen. But it works remarkably well! 😄
+| Option | Rôle |
+|---|---|
+| `-s` | Afficher les résultats dans la console. |
+| `-o <fichier>` | Écrire un journal ; fournit aussi le nom de base du rapport Excel. |
+| `-t auto` | Générer le rapport `.xlsx`. |
+| `-t json` | Écrire un journal JSON ; utiliser `-o` pour obtenir le fichier final normalisé. |
+| `-t plain` | Journal texte, format par défaut. |
+| `-y` | Sortie texte séparée par des tabulations, par exemple avec `-o resultats.tsv`. |
+| `-v <niveau>` | `Trace`, `Debug`, `Info` ou `Data` (résultats uniquement). |
+| `-m <dossier>` | Copier les fichiers retenus dans un dossier de collecte. |
+| `-l <octets>` | Taille maximale d’un fichier à collecter : **10 000 000 octets** par défaut. |
 
----
+### Analyse et réglages
 
-## 🎨 What Does It Look Like?
+| Option | Rôle |
+|---|---|
+| `-r <octets>` | Taille maximale d’un fichier dont le contenu sera analysé : **1 000 000 octets** par défaut dans les sources actuelles. |
+| `-j <nombre>` | Taille du contexte autour d’une correspondance : **200** par défaut. |
+| `-x <nombre>` | Fixer le nombre total de workers ; sans cette option, calcul automatique à partir des ressources et des cibles disponibles au moment du calcul. |
+| `-b <0–3>` | Filtrer les niveaux de triage. `0` conserve tout ; `1` exclut Green ; `2` exclut aussi Yellow ; `3` exclut aussi Red et conserve Black. |
+| `-u` | Enrichir certaines recherches avec les comptes intéressants du domaine. |
+| `-p <dossier>` | Charger un jeu de règles TOML à la place des règles par défaut. |
+| `-z <fichier>` | Charger une configuration TOML. Elle remplace l’objet de configuration construit à partir des options CLI ; éviter de mélanger les deux pour surcharger des valeurs. |
+| `-z generate` | Générer `default.toml` à partir de la configuration courante. |
+| `-e <minutes>` | Régler l’intervalle de statut et le délai de collecte LDAP ; ce n’est pas une limite globale de durée du scan. |
+| `-w <fichier>` | Diagnostic de l’extraction d’identifiants sur un fichier. Pour les classeurs, ce diagnostic lit les données brutes et ne remplace pas un scan bureautique complet. |
 
-<p align="center">
-  <img src="./snaffler_screenshot.png">
-</p>
+Certains textes de l’aide intégrée sont encore historiques, notamment la limite de contenu annoncée à 500 Ko et la liste des formats de sortie. Les valeurs ci-dessus correspondent au code actuel.
 
----
+## Lire le rapport Excel
 
-## 🔑 How Do I Use It?
+La feuille `Findings` contient les colonnes suivantes :
 
-### ⚠️ Important Note
+| Colonne | Contenu |
+|---|---|
+| `Severity` | Classement de la règle : Green, Yellow, Red ou Black. |
+| `Type` | Type de résultat. |
+| `Hostname` | Hôte ou information déduite du chemin. |
+| `FilePath` | Chemin du fichier détecté. |
+| `RuleName` | Règle à l’origine du résultat. |
+| `Username`, `Password` | Identifiants extraits lorsqu’ils ont pu être reconnus. |
+| `DateFound` | Date de détection. |
+| `Preview` | Aperçu du contenu retenu. |
 
-If you "literally just run the EXE on a domain joined machine in the context of a domain user" without any flags, it will basically do nothing. This is intentional (our little prank 🎭 on people who skip README files).
+Une ligne peut signaler un fichier intéressant sans contenir de couple utilisateur/mot de passe. Les documents identifiés comme protégés par mot de passe sont signalés pour examen manuel ; l’outil ne déchiffre pas leur contenu. Les journaux et classeurs peuvent contenir des secrets en clair : les conserver hors du dépôt.
 
-**You MUST add the correct flags** to enable scanning and output.
+## Règles et configuration
 
----
+Les règles livrées avec l’exécutable sont embarquées à la compilation depuis [`Snaffler/SnaffRules/DefaultRules`](Snaffler/SnaffRules/DefaultRules). Pour les modifier sans recompiler :
 
-## 🎛️ Key Command-Line Options
-
-### **Essential Flags** ⭐
-
-| Flag | Description |
-|------|-------------|
-| `-o <file>` | 📝 Output results to a file (e.g., `-o C:\results\audit.log`) |
-| `-s` | 🖥️ Output results to stdout in real-time |
-| `-t <type>` | 📊 Log type: `plain`, `json`, or **`auto`** (Excel export - NEW!) |
-
-### **Verbosity Control** 🔊
-
-| Flag | Description |
-|------|-------------|
-| `-v <level>` | Set verbosity: `Trace` (most verbose), `Debug`, `Info` (default), `Data` (results only) |
-
-### **File Collection** 📥
-
-| Flag | Description |
-|------|-------------|
-| `-m <dir>` | 📂 Auto-copy found files to specified directory |
-| `-l <bytes>` | 📏 Max file size to copy (default: ~10MB) |
-
-### **Scope Control** 🎯
-
-| Flag | Description |
-|------|-------------|
-| `-i <path>` | 📍 Disable discovery, scan specific directory only |
-| `-n <hosts>` | 🖥️ Disable computer discovery, scan specific hosts (comma-separated or file path) |
-| `-d <domain>` | 🌐 Specify domain to search |
-| `-c <DC>` | 🎮 Domain controller to query |
-| `-f` | 🌲 Use DFS only (stealthier!) |
-| `-a` | 📋 List shares only, skip file enumeration |
-
-### **Advanced Options** ⚙️
-
-| Flag | Description |
-|------|-------------|
-| `-b <0-3>` | 🎚️ Boring level - skip less interesting findings (0=find everything, 3=only critical) |
-| `-u` | 👤 Pull interesting usernames from AD and search for them |
-| `-r <bytes>` | 🔍 Max file size to search inside for strings (default: 500KB) |
-| `-j <bytes>` | 📝 Context bytes around found strings (e.g., `-j 200`) |
-| `-z <path>` | ⚙️ Path to config file (use `-z generate` to create template) |
-| `-p <path>` | 📚 Load custom rules from directory |
-| `-x <num>` | 🧵 Max threads (don't go below 4) |
-| `-y` | 📊 TSV-formatted output |
-
----
-
-## 📊 Understanding the Output
-
-Here's an annotated example of a log entry:
-
-<p align="center">
-  <img src="./log_key.png" alt="Log Key">
-</p>
-
-**Reading left to right:**
-
-1. ⏰ **Timestamp** - When the file was found
-2. 🚨 **Triage Level** - Color-coded importance (Red = very interesting, Yellow = somewhat interesting, etc.)
-3. 📋 **Rule Name** - Which detection rule matched
-4. 🔒 **Access Level** - Your permissions (R=Read, W=Write, etc.)
-5. 🎯 **Matched Pattern** - The exact regex that triggered
-6. 📦 **File Size** - Size in bytes/KB/MB
-7. 📅 **Last Modified** - When the file was last changed
-8. 📁 **File Path** - Full UNC path to the file
-
-### 🎨 Triage Levels
-
-- 🔴 **Red** - Highly sensitive (credentials, private keys, etc.)
-- 🟡 **Yellow** - Interesting (configs, database files)
-- 🟢 **Green** - Potentially useful (scripts, documentation)
-- ⚪ **Black** - Low priority but logged
-
----
-
-## 🆕 New Features Usage Examples
-
-### Excel Report Generation
-
-```bash
-# Generate Excel report with all findings
-snaffler.exe -s -t auto -o results.log
-
-# Excel file will be created automatically with structured data
-# Perfect for team collaboration and reporting!
+```powershell
+.\ShareAuditor.exe -i "C:\Audit\Donnees" -p "C:\Audit\Regles" -t auto -o "C:\Audit\personnalise.log" -s
 ```
 
-### Custom Rules Loading
+Le dossier fourni avec `-p` doit contenir un **jeu complet**, incluant les règles de relais et leurs cibles. Un dossier `SnaffRules\DefaultRules` placé à côté de l’exécutable peut également être chargé automatiquement ; à défaut de règles externes, l’outil utilise les ressources embarquées. Des règles définies directement dans la configuration TOML prennent priorité sur ce chargement.
 
-```bash
-# Load rules from custom directory
-snaffler.exe -s -o audit.log -p "C:\MyCustomRules"
+Une règle de contenu doit être reliée à une règle de fichiers via `RelayTargets` pour être exécutée. Les signatures de `KeepModernCloudSecrets.toml` sont **actives dans les règles par défaut** : GitHub, Google, Azure, JWT et Kubernetes sont reliés aux configurations, aux langages et aux documents Office déjà analysés. Des relais complémentaires couvrent les fichiers `.env` et `.env.*`, les noms `config` et `credentials`, ainsi que les scripts shell et les fichiers Terraform/HCL. La recherche Docker est limitée aux fichiers `.docker/config.json` et `.dockercfg`, avec prise en charge des champs JSON entre guillemets.
 
-# Or place rules in SnaffRules/DefaultRules/ next to the executable
-# Snaffler will auto-detect and load them!
+Pour partir d’une configuration correspondant à la version exécutée :
+
+```powershell
+.\ShareAuditor.exe -z generate
+.\ShareAuditor.exe -z "C:\Audit\audit.local.toml"
 ```
 
-### Targeted Auditing with Better Completion
+La configuration expose aussi `MaxArchiveDepth` (3), `MaxArchiveEntries` (10 000), `MaxArchiveEntryBytes` (50 Mio) et `MaxArchiveTotalBytes` (500 Mio). Ces seuils concernent chaque appel d’analyse d’archive ; ils ne constituent pas une limite globale sur toutes les archives imbriquées.
 
-```bash
-# Audit specific hosts with verbose output
-snaffler.exe -s -o results.log -n "DC01,FILESERVER01,BACKUP01" -v Debug
+## Compiler et publier
 
-# Improved task tracking ensures all files are scanned
-# before exiting - no more premature termination! 🎉
-```
+Prérequis : **SDK .NET 10**, accès aux paquets NuGet et Windows x64 pour exécuter l’outil. Depuis la racine du dépôt :
 
----
-
-## 🔧 Building from Source
-
-### Prerequisites
-
-- .NET Framework (for Snaffler.sln) or .NET Core (for UltraSnaffler.sln)
-- Visual Studio 2019 or later
-
-### Build Steps
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/Snaffler.git
+```powershell
+git clone https://github.com/swinowz/Snaffler.git
 cd Snaffler
 
-# Restore NuGet packages
-dotnet restore
-
-# Build the project
-dotnet build -c Release
-
-# Or use Visual Studio
-# Open Snaffler.sln or UltraSnaffler.sln and build
+# Publication autonome Windows x64 : pas de runtime à installer sur la cible
+dotnet publish .\Snaffler\Snaffler.csproj -c Release -r win-x64 --self-contained true -o .\publish-release
 ```
 
----
+Le dossier `publish-release` contient `ShareAuditor.exe` et ses dépendances : **copier le dossier complet**. Les règles par défaut sont embarquées. Le projet reste organisé en `Snaffler` (CLI et règles) et `SnaffCore` (découverte, analyse et sorties) ; ces noms internes sont historiques.
 
-## 📝 Configuration Files
+La commande compile la branche actuellement extraite. Les fonctions décrites pour une branche de développement nécessitent que ces sources aient été intégrées à la branche récupérée ; une ancienne publication peut encore cibler .NET 8.
 
-Generate a sample config with all options:
+## Vérifier les signatures et les parseurs
 
-```bash
-snaffler.exe -z generate
+```powershell
+dotnet run --project .\tests\CloudRulesRegression
 ```
 
-This creates `default.toml` showing all configurable options including:
-- Custom classification rules
-- File extension filters
-- Content regex patterns
-- Output formatting
-- Thread pool settings
+Ce test de régression charge les règles TOML par défaut et utilise le moteur réel de classification sur des fichiers temporaires synthétiques. Il vérifie les six familles de signatures, les relais de fichiers, un document DOCX et des cas négatifs. Six tests supplémentaires couvrent la lecture XLS/XLSX, les parseurs Word et Outlook, les archives ZIP et l’export Excel. Aucun véritable secret n’est stocké dans les tests. Il peut être exécuté sous Linux pour cette partie locale du moteur : l’initialisation de l’identité Windows est contournée dans le test uniquement. La découverte AD/SMB n’est pas couverte par ce test.
 
----
+## Dépendances et audit de sécurité
 
-## 🎯 Common Use Cases
+Les dépendances de lecture ont été mises à jour : Toxy **2.6.0**, NPOI **2.8.1**, MsgReader **6.2.1** (OpenMcdf **3.4.0**) et SharpCompress **0.50.12**. Les paquets Microsoft utilisés par le projet sont sur le correctif **10.0.15**. Les anciennes dépendances transitives ImageSharp et Newtonsoft.Json ont disparu du graphe de l’application.
 
-### 🔍 Quick Domain-Wide Scan
-```bash
-snaffler.exe -s -d contoso.local -o scan_results.log -v Info
+Pour contrôler les dépendances directes et transitives après restauration :
+
+```powershell
+dotnet list .\Snaffler\Snaffler.csproj package --vulnerable --include-transitive
 ```
 
-### 🎯 Targeted File Server Audit
-```bash
-snaffler.exe -s -n "FILESERVER01" -o fileserver_audit.log -m C:\findings -l 50000000
-```
+Au 25 novembre 2026, cet audit ne signale aucune vulnérabilité connue dans le graphe restauré de ShareAuditor. Ce résultat dépend de la base d’avis NuGet à la date du contrôle ; les avertissements de compilation liés aux anciennes API et aux appels Windows sont distincts.
 
-### 📊 Generate Excel Report for Management
-```bash
-snaffler.exe -s -t auto -d contoso.local -o executive_report.log -b 2
-```
+## Limites actuelles
 
-### 🥷 Stealthy DFS-Only Enumeration
-```bash
-snaffler.exe -s -f -d contoso.local -o stealthy_scan.log
-```
+- Les règles filtrent les fichiers avant l’analyse de contenu. Augmenter `-r` ne suffit pas à faire analyser tous les formats.
+- Le parsing prend principalement en charge les formats Office sélectionnés par les relais. La présence d’un parseur PDF ou d’autres formats dans les dépendances n’active pas leur analyse dans les règles par défaut.
+- L’analyse d’archives utilise des fichiers temporaires ; les résultats peuvent exposer leur chemin temporaire plutôt que celui du membre dans l’archive. La gestion des archives chiffrées et imbriquées reste à valider. Les contrôles de taille après extraction ne constituent pas une protection complète contre une archive malveillante.
+- Des tâches réseau considérées comme bloquées peuvent être abandonnées. Les accès refusés, erreurs d’E/S et timeouts peuvent donc laisser un scan incomplet ; consulter les journaux.
+- Le nombre de workers automatique est un point de départ. Sur un serveur SMB lent ou avec de gros documents, fixer une valeur prudente avec `-x`, par exemple `-x 4`.
 
-### 🔎 Deep Dive on Specific Share
-```bash
-snaffler.exe -s -i "\\FILESERVER01\Finance" -o finance_deep_dive.log -r 5000000
-```
+## Contribution et données locales
 
----
+Versionner les sources, les règles et les exemples synthétiques. Conserver les rapports, fichiers collectés, listes de cibles et configurations personnelles hors du dépôt, par exemple dans les dossiers ignorés `reports/`, `collected/` ou `local-config/`. Le fichier `default.toml` généré peut contenir des informations locales et est ignoré.
 
-## ⚠️ Legal Disclaimer
+Le répertoire [`snafflertest`](snafflertest/README.md) est un corpus historique de noms de fichiers. Les anciennes clés privées ont été remplacées par des marqueurs inertes ; il ne faut pas y déposer de données réelles.
 
-**Snaffler** is intended for authorized security testing and research purposes only. 
+## Origine et licence
 
-- ✅ Use on networks you own or have explicit permission to test
-- ❌ Do NOT use on systems without authorization
-- 🎓 For educational and legitimate security assessment only
+Développé par **swinowz**, à partir du travail des auteurs et contributeurs de [Snaffler / SnaffCon](https://github.com/SnaffCon/Snaffler). Le moteur de découverte et une partie des règles proviennent de ce projet ; les ajouts spécifiques à ShareAuditor sont présentés ci-dessus.
 
-**The authors assume no liability for misuse of this tool.**
-
----
-
-## 📜 License
-
-This project is licensed under the Apache License 2.0 - see the Licence for details.
-
----
-
-<p align="center">
-  <sub>🔴🟡🟢 Happy Hunting! 🔍</sub>
-</p>
-
+Le fichier [`LICENSE`](LICENSE) du dépôt contient la **GNU GPL version 3**. Les dépendances conservent leurs propres conditions ; le code de l’export configure notamment EPPlus en mode `NonCommercial`. Ce paramètre ne remplace pas les conditions de licence d’EPPlus.

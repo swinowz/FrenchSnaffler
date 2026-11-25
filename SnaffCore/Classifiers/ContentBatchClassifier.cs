@@ -106,13 +106,16 @@ namespace SnaffCore.Classifiers
             }
         }
 
+        private static string LogicalExtension(FileInfo fileInfo) =>
+            ScanAliases.LogicalExtension(ScanAliases.Get(fileInfo.FullName) ?? fileInfo.FullName);
+
         private string ReadFileAsString(FileInfo fileInfo)
         {
             try
             {
 #if ULTRASNAFFLER
                 // Parse office documents and PDFs to text
-                if (ParsedExtensions.Contains(fileInfo.Extension))
+                if (ParsedExtensions.Contains(LogicalExtension(fileInfo)))
                 {
                     return ParseFileToString(fileInfo);
                 }
@@ -236,7 +239,7 @@ namespace SnaffCore.Classifiers
         {
             try
             {
-                string ext = fileInfo.Extension.ToLower();
+                string ext = LogicalExtension(fileInfo).ToLowerInvariant();
                 
                 // Excel (xlsx/xlsm/xls/xlt...) : lecture STREAMING via ExcelDataReader
                 // (pas de DOM complet en memoire comme ClosedXML/Toxy -> gros gain RAM avec bcp de threads).

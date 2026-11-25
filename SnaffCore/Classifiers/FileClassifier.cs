@@ -48,16 +48,19 @@ namespace SnaffCore.Classifiers
             BlockingMq Mq = BlockingMq.GetMq();
             // figure out what part we gonna look at
             string stringToMatch = null;
+            // archive members and SCCM content are matched under their real name
+            string logicalPath = ScanAliases.Get(fileInfo.FullName) ?? fileInfo.FullName;
+            string logicalName = ScanAliases.LogicalName(logicalPath);
 
             switch (ClassifierRule.MatchLocation)
             {
                 case MatchLoc.FileExtension:
-                    stringToMatch = fileInfo.Extension;
+                    stringToMatch = ScanAliases.LogicalExtension(logicalPath);
                     // special handling to treat files named like 'thing.kdbx.bak'
                     if (stringToMatch == ".bak")
                     {
                         // strip off .bak
-                        string subName = fileInfo.Name.Replace(".bak", "");
+                        string subName = logicalName.Replace(".bak", "");
                         stringToMatch = Path.GetExtension(subName);
                         // if this results in no file extension, put it back.
                         if (stringToMatch == "")
@@ -73,10 +76,10 @@ namespace SnaffCore.Classifiers
                     }
                     break;
                 case MatchLoc.FileName:
-                    stringToMatch = fileInfo.Name;
+                    stringToMatch = logicalName;
                     break;
                 case MatchLoc.FilePath:
-                    stringToMatch = fileInfo.FullName;
+                    stringToMatch = logicalPath;
                     break;
                 case MatchLoc.FileLength:
                     if (!SizeMatch(fileInfo))
@@ -349,7 +352,7 @@ namespace SnaffCore.Classifiers
                 // build the list of passwords to try including the filename
                 // COPIE : ne pas aliaser/faire grossir la liste globale MyOptions.CertPasswords (fuite + O(n^2))
                 List<string> passwords = new List<string>(MyOptions.CertPasswords);
-                passwords.Add(Path.GetFileNameWithoutExtension(fileInfo.Name));
+                passwords.Add(Path.GetFileNameWithoutExtension(ScanAliases.LogicalName(ScanAliases.Get(fileInfo.FullName) ?? fileInfo.Name)));
 
                 // try each of our very obvious passwords
                 foreach (string password in passwords)

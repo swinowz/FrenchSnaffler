@@ -11,7 +11,8 @@ namespace SnaffCore.Classifiers
         public TextResult TextResult { get; set; }
         public RwStatus RwStatus { get; set; }
         public ClassifierRule MatchedRule { get; set; }
-        // Path shown in reports. For archive members: archive.zip!dir\file.
+        // Path shown in reports: archive.zip!dir\file for archive members,
+        // the DataLib path for SCCM content library files.
         public string DisplayPath { get; set; }
         public string ReportPath => DisplayPath ?? FileInfo?.FullName;
 
@@ -33,9 +34,7 @@ namespace SnaffCore.Classifiers
 
             // nasty debug
             this.FileInfo = fileInfo;
-#if ULTRASNAFFLER
-            this.DisplayPath = ArchiveClassifier.GetDisplayPath(fileInfo.FullName);
-#endif
+            this.DisplayPath = ScanAliases.Get(fileInfo.FullName);
 
             // this is where we actually automatically grab a copy of the file if wanted.
             if (MyOptions.Snaffle)

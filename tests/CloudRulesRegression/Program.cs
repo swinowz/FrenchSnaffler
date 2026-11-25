@@ -32,6 +32,8 @@ string google = "AIza" + new string('C', 35);
 string secret = new string('D', 24);
 string jwt = "eyJ" + new string('E', 12) + "." + new string('F', 16) + "." + new string('G', 16);
 string auth = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("synthetic-user:invalid-test-password"));
+string ppkOpen = "PuTTY-User-Key-File-3: ssh-ed25519\r\nEncryption: none\r\nComment: synthetic\r\nPublic-Lines: 1\r\nAAAA\r\n";
+string ppkLocked = "PuTTY-User-Key-File-3: ssh-ed25519\r\nEncryption: aes256-cbc\r\nComment: synthetic\r\nPublic-Lines: 1\r\nAAAA\r\n";
 var cases = new (string Path, string Content, string Rule, bool Expected)[]
 {
     ("github.json", github, "KeepGitHubToken", true),
@@ -58,6 +60,21 @@ var cases = new (string Path, string Content, string Rule, bool Expected)[]
     ("short.txt", "ghp_short", "KeepGitHubToken", false),
     ("empty.yaml", "apiVersion: v1\nkind: Config", "KeepKubernetesConfig", false),
     ("image.png", github, "KeepGitHubToken", false),
+    // upstream rules ported to the fork (VM disks, cmd "set", PuTTY keys)
+    ("vm/srv-app.vhdx", "synthetic", "KeepVMDisksByExtension", true),
+    ("vm/legacy.vmdk", "synthetic", "KeepVMDisksByExtension", true),
+    ("scripts/deploy.bat", "@echo off\r\nset \"DB_PASSWORD=Synth3tic-Value\"\r\n", "KeepCmdCredentials", true),
+    ("scripts/deploy-fr.cmd", "set mdp=Synth3tic-Value\r\n", "KeepCmdCredentials", true),
+    ("scripts/args.bat", "set password=%1\r\n", "KeepCmdCredentials", false),
+    ("scripts/delayed.bat", "setlocal enabledelayedexpansion\r\nset password=!pwd!\r\n", "KeepCmdCredentials", false),
+    ("scripts/prompt.bat", "set /p password=Entrez le mot de passe:\r\n", "KeepCmdCredentials", false),
+    ("scripts/empty.bat", "set password=\r\n", "KeepCmdCredentials", false),
+    ("scripts/empty-then-code.bat", "set password=\r\nnet start spooler\r\n", "KeepCmdCredentials", false),
+    ("scripts/reset.bat", "call reset_password=abcdef\r\n", "KeepCmdCredentials", false),
+    ("keys/open.ppk", ppkOpen, "KeepUnencryptedPPK", true),
+    ("keys/open-not-red.ppk", ppkOpen, "KeepEncryptedPPK", false),
+    ("keys/locked.ppk", ppkLocked, "KeepEncryptedPPK", true),
+    ("keys/locked-not-black.ppk", ppkLocked, "KeepUnencryptedPPK", false),
 };
 string temp = Path.Combine(Path.GetTempPath(), "shareauditor-cloud-tests-" + Guid.NewGuid().ToString("N"));
 int failed = 0;
@@ -98,6 +115,8 @@ failed += ParserRegression.Run();
 failed += ArchiveRegression.Run();
 failed += FormatRegression.Run();
 failed += CertificateRegression.Run();
+failed += SccmRegression.Run();
+failed += CheckpointRegression.Run();
 return failed == 0 ? 0 : 1;
 
 public class RuleSet

@@ -33,9 +33,31 @@ Les ajouts de ce fork portent sur les points suivants ; ils s’ajoutent aux fon
 | **Qualité des résultats** | Déduplication par fichier et preuve détectée, filtrage de la clé AWS d’exemple publique, sorties JSON/texte corrigées. |
 | **Certificats** | Chargement via `X509CertificateLoader` et clés éphémères (aucune écriture dans le magasin de clés). Les PEM avec clé privée RSA, PKCS#8 ou chiffrée sont reconnus, ainsi que les clés PEM seules (`PrivateKeyWithoutCertificate`). |
 | **Archives** | Action `EnterArchive` (zip, 7z, rar, tar, gz, bz2, xz). Chaque membre garde son nom et ses dossiers, donc les règles par nom (`id_rsa`, `unattend.xml`, `web.config`) et par chemin (`\.ssh\`, `\.aws\`) s’appliquent aussi dans les archives. Le rapport indique `archive.zip!dossier\fichier`, y compris pour les archives imbriquées. Profondeur et tailles sont contrôlées pendant l’extraction ; les chemins `..` sont neutralisés. |
+| **Bibliothèque SCCM** | Dans `SCCMContentLib$`, les fichiers sont stockés sous leur hash (`FileLib`) ; ShareAuditor lit les `.INI` de `DataLib` et analyse chaque fichier sous son vrai nom (`unattend.xml`, scripts, clés). Le rapport indique le chemin `DataLib\<paquet>\...`, et `-m` collecte le fichier sous ce nom. |
+| **Reprise des longs scans** | `--checkpoint <fichier>` mémorise les dossiers et machines terminés ; relancer la même commande reprend là où le scan s’est arrêté, sans écraser le premier rapport. |
+| **Autre compte réseau** | `--username DOMAINE\compte` : les accès SMB et LDAP utilisent ce compte. Si la machine peut vérifier le compte (jointe au domaine, ou compte local), le mot de passe est contrôlé au démarrage ; sinon le compte sert aux seuls accès réseau, comme `runas /netonly`, et un avertissement l’indique. Sans `--password`, le mot de passe est demandé sans écho. |
+| **Règles supplémentaires** | Disques de VM (`.vmdk`, `.vhdx`…), `set "MOT_DE_PASSE=…"` / `set mdp=…` dans les scripts batch (variables `%x%`/`!x!` ignorées), clés PuTTY : Black sans phrase de passe, Red si chiffrée. |
 | **Socle actuel** | Cible Windows x64 sous .NET 10, Server GC, GC concurrent et Tiered PGO. |
 
 Ces changements visent à réduire le coût des scans et à faciliter le traitement des résultats. Aucun gain chiffré universel n’est annoncé : le débit dépend du réseau, des documents, des règles et des ressources disponibles. L’export Excel conserve le classeur en mémoire ; ce n’est pas une sortie à mémoire constante.
+
+## Comparatif avec Snaffler
+
+Mesure du 25 novembre 2026, sur la même VM Windows 11 (2 vCPU, 8 Go) et le même corpus synthétique de 50 292 fichiers (1,8 Go, 462 dossiers). Les deux outils tournent avec leurs réglages par défaut et `-r 1000000`, en 3 passes alternées (médianes).
+
+| | Snaffler 1.0.244 (release officielle) | ShareAuditor |
+|---|---|---|
+| Temps de travail réel (fin de l’activité CPU) | 13,0 s | **10,8 s** |
+| CPU consommé | 21,3 s | **15,7 s** |
+| Durée jusqu’à la fin du programme | ~301 s | **10,8 s** |
+| Détections | 2 974 | 1 740 |
+
+- À travail égal, ShareAuditor est environ 1,2 fois plus rapide et consomme un quart de CPU en moins.
+- Snaffler attend son contrôle de fin périodique (5 minutes par défaut, option `-e`) avant de s’arrêter ; ShareAuditor vérifie la fin du scan toutes les 2 secondes.
+- Les détections supplémentaires de Snaffler sont la clé d’exemple publique d’AWS (`AKIAIOSFODNN7EXAMPLE`, 1 854 fois) et des doublons d’une même règle sur un même fichier (459). Les seuls fichiers signalés par Snaffler et absents du rapport de ShareAuditor ne contiennent que cette clé d’exemple ; ShareAuditor signale en plus 10 classeurs Excel contenant des identifiants, que Snaffler ne lit pas.
+- Snaffler consomme moins de mémoire sur ce corpus (environ 160 Mo contre 520 à 600 Mo), en raison du parallélisme et du GC serveur.
+
+Ces chiffres dépendent du corpus : sur des partages réseau, la latence SMB pèse davantage que le CPU.
 
 ## Démarrage rapide
 
@@ -73,6 +95,8 @@ Les dossiers de sortie doivent exister. Avec `-t auto -o "C:\Audit\rapport.log"`
 | `-k <fichier>` | Liste de machines à exclure. |
 | `-a` | Découvrir les partages sans parcourir leurs fichiers. |
 | `-f` | Limiter la découverte de partages à DFS. |
+| `--username <compte>` | Accéder au réseau avec un autre compte (`DOMAINE\compte` ou `compte@domaine`), comme `runas /netonly`. |
+| `--password <mdp>` | Mot de passe de `--username` ; s’il est omis, il est demandé sans écho, ce qui évite l’historique et la liste des processus. |
 
 ### Sortie et collecte
 
@@ -101,6 +125,7 @@ Les dossiers de sortie doivent exister. Avec `-t auto -o "C:\Audit\rapport.log"`
 | `-z <fichier>` | Charger une configuration TOML. Elle remplace l’objet de configuration construit à partir des options CLI ; éviter de mélanger les deux pour surcharger des valeurs. |
 | `-z generate` | Générer `default.toml` à partir de la configuration courante. |
 | `-e <minutes>` | Régler l’intervalle de statut et le délai de collecte LDAP ; ce n’est pas une limite globale de durée du scan. |
+| `--checkpoint <fichier>` | Reprise d’un scan interrompu : relancer exactement la même commande. Les dossiers à moitié traités sont rescannés ; les résultats de la reprise vont dans `<sortie>-resume-N`. |
 | `-w <fichier>` | Diagnostic de l’extraction d’identifiants sur un fichier. Pour les classeurs, ce diagnostic lit les données brutes et ne remplace pas un scan bureautique complet. |
 
 Certains textes de l’aide intégrée sont encore historiques, notamment la limite de contenu annoncée à 500 Ko et la liste des formats de sortie. Les valeurs ci-dessus correspondent au code actuel.
@@ -166,18 +191,6 @@ dotnet run --project .\tests\CloudRulesRegression
 ```
 
 Ce test de régression charge les règles TOML par défaut et utilise le moteur réel de classification sur des fichiers temporaires synthétiques. Il vérifie les six familles de signatures, les relais de fichiers, un document DOCX et des cas négatifs. D’autres séries couvrent la lecture XLS/XLSX, les parseurs Word et Outlook, l’export Excel, les archives (règles par nom dans une archive, chemin affiché, archives imbriquées, profondeur, chemins `..`, limite de taille), les formats OpenDocument et notes Word, et les certificats (PEM avec ou sans clé, DER, PFX sans mot de passe, mot de passe faible ou fort). Aucun véritable secret n’est stocké dans les tests. Il peut être exécuté sous Linux pour cette partie locale du moteur : l’initialisation de l’identité Windows est contournée dans le test uniquement. La découverte AD/SMB n’est pas couverte par ce test.
-
-## Dépendances et audit de sécurité
-
-Les dépendances de lecture ont été mises à jour : Toxy **2.6.0**, NPOI **2.8.1**, MsgReader **6.2.1** (OpenMcdf **3.4.0**) et SharpCompress **0.50.12**. Les paquets Microsoft utilisés par le projet sont sur le correctif **10.0.15**. Les anciennes dépendances transitives ImageSharp et Newtonsoft.Json ont disparu du graphe de l’application.
-
-Pour contrôler les dépendances directes et transitives après restauration :
-
-```powershell
-dotnet list .\Snaffler\Snaffler.csproj package --vulnerable --include-transitive
-```
-
-Au 25 novembre 2026, cet audit ne signale aucune vulnérabilité connue dans le graphe restauré de ShareAuditor. Ce résultat dépend de la base d’avis NuGet à la date du contrôle ; la compilation ne produit plus d’avertissement C#, d’analyse de plateforme ou d’API obsolète. Seul reste l’avertissement de licence OSMF ajouté par NPOI 2.8 (`AcceptNPOIOSMFLicense`), qui demande une acceptation explicite de la licence.
 
 ## Limites actuelles
 

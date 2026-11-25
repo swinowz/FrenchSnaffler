@@ -62,6 +62,16 @@ namespace SnaffCore.Config
         public bool ShareFinderEnabled { get; set; } = true;
         public string TargetDomain { get; set; }
         public string TargetDc { get; set; }
+
+        // Pause/resume: path of the checkpoint log (--checkpoint)
+        public string CheckpointFile { get; set; }
+
+        // Alternate credentials for network access (--username / --password).
+        // The password is never written to a generated config file.
+        public string RunAsUser { get; set; }
+        public string RunAsDomain { get; set; }
+        [Nett.TomlIgnore]
+        public string RunAsPassword { get; set; }
         public bool LogDeniedShares { get; set; } = false; 
 
         // FileScanner Options

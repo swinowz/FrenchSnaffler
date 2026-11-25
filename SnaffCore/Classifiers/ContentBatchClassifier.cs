@@ -27,8 +27,22 @@ namespace SnaffCore.Classifiers
             new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
             {
                 ".doc",".docx",".xls",".xlsx",".eml",".msg",".pdf",".ppt",".pptx",
-                ".rtf",".docm",".xlsm",".pptm",".dot",".dotx",".dotm",".xlt",".xltm"
+                ".rtf",".docm",".xlsm",".pptm",".dot",".dotx",".dotm",".xlt",".xltm",
+                ".odt",".ods",".odp",".ott",".ots"
             };
+
+        private static readonly System.Text.RegularExpressions.RegexOptions XmlRx =
+            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant;
+        private static readonly System.Text.RegularExpressions.Regex DocxSeparators =
+            new System.Text.RegularExpressions.Regex("</w:tc>|</w:tr>|</w:p>", XmlRx);
+        private static readonly System.Text.RegularExpressions.Regex OdfSeparators =
+            new System.Text.RegularExpressions.Regex("</table:table-cell>|<table:covered-table-cell/>|</table:table-row>|</text:p>|</text:h>|<text:tab/>|<text:line-break/>|<text:s/>|<text:s [^>]*/>", XmlRx);
+        private static readonly System.Text.RegularExpressions.Regex XmlTags =
+            new System.Text.RegularExpressions.Regex("<[^>]+>", XmlRx);
+        // Word parts that hold user text: body, headers/footers, notes and comments.
+        private static readonly System.Text.RegularExpressions.Regex DocxTextParts =
+            new System.Text.RegularExpressions.Regex(@"^word/(document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | XmlRx);
 #endif
 
         /// <summary>
@@ -263,6 +277,13 @@ namespace SnaffCore.Classifiers
                     return ParseWithTextParser(fileInfo); // repli sur Toxy
                 }
 
+                // OpenDocument (LibreOffice): zip + content.xml, no parser library needed.
+                if (ext == ".odt" || ext == ".ods" || ext == ".odp" || ext == ".ott" || ext == ".ots")
+                {
+                    try { return ParseOpenDocument(fileInfo); }
+                    catch (Exception ex) { Mq.Trace($"OpenDocument parse failed for {fileInfo.Name}: {ex.Message}"); return ""; }
+                }
+
                 // For all other documents, use text parser
                 return ParseWithTextParser(fileInfo);
             }
@@ -281,19 +302,13 @@ namespace SnaffCore.Classifiers
             {
                 foreach (var entry in zip.Entries)
                 {
-                    if (!entry.FullName.StartsWith("word/", System.StringComparison.OrdinalIgnoreCase)) continue;
-                    string n = entry.Name.ToLowerInvariant();
-                    if (!n.EndsWith(".xml")) continue;
-                    if (n != "document.xml" && !n.StartsWith("header") && !n.StartsWith("footer")) continue;
-
+                    if (!DocxTextParts.IsMatch(entry.FullName)) continue;
                     using (var s = entry.Open())
                     using (var r = new System.IO.StreamReader(s))
                     {
                         string xml = r.ReadToEnd();
-                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "</w:tc>", "\t");
-                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "</w:tr>", "\n");
-                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "</w:p>", "\n");
-                        xml = System.Text.RegularExpressions.Regex.Replace(xml, "<[^>]+>", "");
+                        xml = DocxSeparators.Replace(xml, m => m.Value == "</w:tc>" ? "\t" : "\n");
+                        xml = XmlTags.Replace(xml, "");
                         sb.Append(System.Net.WebUtility.HtmlDecode(xml));
                         sb.Append('\n');
                     }
@@ -302,6 +317,45 @@ namespace SnaffCore.Classifiers
             return sb.ToString();
         }
         
+        // OpenDocument text extraction: content.xml (+ styles.xml for headers/footers).
+        // Cells -> tab, rows/paragraphs -> newline, matching the Office parsers so the
+        // credential-table extraction works the same way. Encrypted documents are reported.
+        private string ParseOpenDocument(FileInfo fileInfo)
+        {
+            var sb = new System.Text.StringBuilder();
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(fileInfo.FullName))
+            {
+                var manifest = zip.GetEntry("META-INF/manifest.xml");
+                if (manifest != null)
+                {
+                    using (var r = new System.IO.StreamReader(manifest.Open()))
+                    {
+                        if (r.ReadToEnd().IndexOf("encryption-data", StringComparison.Ordinal) >= 0)
+                        {
+                            ReportPasswordProtectedFile(fileInfo);
+                            return "";
+                        }
+                    }
+                }
+                foreach (string part in new[] { "content.xml", "styles.xml" })
+                {
+                    var entry = zip.GetEntry(part);
+                    if (entry == null) continue;
+                    using (var r = new System.IO.StreamReader(entry.Open()))
+                    {
+                        string xml = r.ReadToEnd();
+                        xml = OdfSeparators.Replace(xml, m =>
+                            m.Value == "</table:table-cell>" || m.Value == "<table:covered-table-cell/>" || m.Value == "<text:tab/>" ? "\t"
+                            : m.Value.StartsWith("<text:s", StringComparison.Ordinal) ? " " : "\n");
+                        xml = XmlTags.Replace(xml, "");
+                        sb.Append(System.Net.WebUtility.HtmlDecode(xml));
+                        sb.Append('\n');
+                    }
+                }
+            }
+            return sb.ToString();
+        }
+
         /// <summary>
         /// Report a password-protected file for manual investigation
         /// </summary>

@@ -51,11 +51,12 @@ Mesure du 25 novembre 2026, sur la même VM Windows 11 (2 vCPU, 8 Go) et le mêm
 | Temps de travail réel (fin de l’activité CPU) | 13,0 s | **10,8 s** |
 | CPU consommé | 21,3 s | **15,7 s** |
 | Durée jusqu’à la fin du programme | ~301 s | **10,8 s** |
-| Détections | 2 974 | 1 740 |
+| Détections (avant déduplication) | 2 974 | 1 740 |
+| Détections (après déduplication par règle et fichier) | 2 515 | **1 740** |
 
 - À travail égal, ShareAuditor est environ 1,2 fois plus rapide et consomme un quart de CPU en moins.
 - Snaffler attend son contrôle de fin périodique (5 minutes par défaut, option `-e`) avant de s’arrêter ; ShareAuditor vérifie la fin du scan toutes les 2 secondes.
-- Les détections supplémentaires de Snaffler sont la clé d’exemple publique d’AWS (`AKIAIOSFODNN7EXAMPLE`, 1 854 fois) et des doublons d’une même règle sur un même fichier (459). Les seuls fichiers signalés par Snaffler et absents du rapport de ShareAuditor ne contiennent que cette clé d’exemple ; ShareAuditor signale en plus 10 classeurs Excel contenant des identifiants, que Snaffler ne lit pas.
+- La déduplication compte une seule détection par paire règle/fichier : elle retire 459 doublons à Snaffler et aucun à ShareAuditor. Le rapport de Snaffler contient aussi 1 854 occurrences de la clé d’exemple publique d’AWS (`AKIAIOSFODNN7EXAMPLE`), que ShareAuditor filtre. Les seuls fichiers signalés par Snaffler et absents du rapport de ShareAuditor ne contiennent que cette clé d’exemple ; ShareAuditor signale en plus 10 classeurs Excel contenant des identifiants, que Snaffler ne lit pas.
 - Snaffler consomme moins de mémoire sur ce corpus (environ 160 Mo contre 520 à 600 Mo), en raison du parallélisme et du GC serveur.
 
 Ces chiffres dépendent du corpus : sur des partages réseau, la latence SMB pèse davantage que le CPU.

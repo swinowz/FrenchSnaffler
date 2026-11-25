@@ -466,7 +466,7 @@ namespace ShareAuditor
                     parsedConfig.RunAsPassword = runAsPasswordArg.Parsed
                         ? runAsPasswordArg.Value ?? ""
                         : SnaffCore.RunAsCredentials.PromptPassword(runAsDomain + "\\" + runAsUser);
-                    Mq.Info("Network access will use " + runAsDomain + "\\" + runAsUser + " (runas /netonly style).");
+                    Mq.Info("Network access will use " + runAsDomain + "\\" + runAsUser + ".");
                 }
                 else if (runAsPasswordArg.Parsed)
                 {

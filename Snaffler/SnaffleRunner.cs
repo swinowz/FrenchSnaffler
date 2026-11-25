@@ -240,8 +240,11 @@ namespace ShareAuditor
                 Microsoft.Win32.SafeHandles.SafeAccessTokenHandle runAsToken = null;
                 if (!String.IsNullOrEmpty(Options.RunAsUser))
                 {
-                    runAsToken = SnaffCore.RunAsCredentials.Logon(Options.RunAsDomain, Options.RunAsUser, Options.RunAsPassword);
+                    runAsToken = SnaffCore.RunAsCredentials.Logon(Options.RunAsDomain, Options.RunAsUser, Options.RunAsPassword,
+                        out bool runAsVerified, out string runAsDetail);
                     Options.RunAsPassword = null;
+                    string runAsMessage = "Credentials for " + Options.RunAsDomain + "\\" + Options.RunAsUser + ": " + runAsDetail + ".";
+                    if (runAsVerified) Mq.Info(runAsMessage); else Mq.Error(runAsMessage);
                 }
                 WindowsIdentity impersonatedUser = WindowsIdentity.GetCurrent();
                 Task thing = Task.Factory.StartNew(() => {

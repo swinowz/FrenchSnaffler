@@ -54,7 +54,7 @@ Mesure du 25 novembre 2026, sur la même VM Windows 11 (2 vCPU, 8 Go) et le mêm
 
 - À travail égal, ShareAuditor est environ 1,2 fois plus rapide et consomme un quart de CPU en moins.
 - Snaffler attend son contrôle de fin périodique (5 minutes par défaut, option `-e`) avant de s’arrêter ; ShareAuditor vérifie la fin du scan toutes les 2 secondes.
-- Les détections supplémentaires de Snaffler sont la clé d’exemple publique d’AWS (`AKIAIOSFODNN7EXAMPLE`, 1 854 fois) et des doublons d’une même règle sur un même fichier (459). Aucun fichier signalé par Snaffler n’est absent du rapport de ShareAuditor ; ShareAuditor signale en plus 10 classeurs Excel contenant des identifiants, que Snaffler ne lit pas.
+- Les détections supplémentaires de Snaffler sont la clé d’exemple publique d’AWS (`AKIAIOSFODNN7EXAMPLE`, 1 854 fois) et des doublons d’une même règle sur un même fichier (459). Les seuls fichiers signalés par Snaffler et absents du rapport de ShareAuditor ne contiennent que cette clé d’exemple ; ShareAuditor signale en plus 10 classeurs Excel contenant des identifiants, que Snaffler ne lit pas.
 - Snaffler consomme moins de mémoire sur ce corpus (environ 160 Mo contre 520 à 600 Mo), en raison du parallélisme et du GC serveur.
 
 Ces chiffres dépendent du corpus : sur des partages réseau, la latence SMB pèse davantage que le CPU.

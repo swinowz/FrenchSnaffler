@@ -1,10 +1,35 @@
+# PuTTY private keys. Every .ppk is reported once: Black when the key is stored
+# without a passphrase (usable as is), Red when it is encrypted (crackable).
 [[ClassifierRules]]
 EnumerationScope = "FileEnumeration"
-RuleName = "KeepSSHKeysByFileExtension"
-MatchAction = "Snaffle"
-Description = "SSHKeys"
+RuleName = "RelayPPKForContentScan"
+MatchAction = "Relay"
+RelayTargets = ["KeepUnencryptedPPK", "KeepEncryptedPPK"]
+Description = "PuTTY .ppk keys are read to tell unencrypted keys from encrypted ones."
 MatchLocation = "FileExtension"
 WordListType = "Exact"
 MatchLength = 0
 WordList = ["\\.ppk"]
+Triage = "Green"
+
+[[ClassifierRules]]
+EnumerationScope = "ContentsEnumeration"
+RuleName = "KeepUnencryptedPPK"
+MatchAction = "Snaffle"
+Description = "PuTTY private key without passphrase."
+MatchLocation = "FileContentAsString"
+WordListType = "Regex"
+MatchLength = 0
+WordList = ["PuTTY-User-Key-File-\\d+:[^\\r\\n]*\\r?\\nEncryption:\\s*none"]
 Triage = "Black"
+
+[[ClassifierRules]]
+EnumerationScope = "ContentsEnumeration"
+RuleName = "KeepEncryptedPPK"
+MatchAction = "Snaffle"
+Description = "PuTTY private key protected by a passphrase (crackable offline)."
+MatchLocation = "FileContentAsString"
+WordListType = "Regex"
+MatchLength = 0
+WordList = ["PuTTY-User-Key-File-\\d+:[^\\r\\n]*\\r?\\nEncryption:\\s*(?!none)\\S+"]
+Triage = "Red"

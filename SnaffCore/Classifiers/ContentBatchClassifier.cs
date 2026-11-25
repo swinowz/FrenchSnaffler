@@ -43,6 +43,13 @@ namespace SnaffCore.Classifiers
         private static readonly System.Text.RegularExpressions.Regex DocxTextParts =
             new System.Text.RegularExpressions.Regex(@"^word/(document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml$",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase | XmlRx);
+        // PowerPoint parts that hold user text: slides, their notes, and comments.
+        private static readonly System.Text.RegularExpressions.Regex PptxTextParts =
+            new System.Text.RegularExpressions.Regex(@"^ppt/(slides/slide\d+|notesSlides/notesSlide\d+|comments/.*)\.xml$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | XmlRx);
+        // A run of text in a slide ends a paragraph: </a:p> -> newline.
+        private static readonly System.Text.RegularExpressions.Regex PptxSeparators =
+            new System.Text.RegularExpressions.Regex("</a:p>", XmlRx);
 #endif
 
         /// <summary>
@@ -287,7 +294,19 @@ namespace SnaffCore.Classifiers
                     catch (Exception ex) { Mq.Trace($"OpenDocument parse failed for {fileInfo.Name}: {ex.Message}"); return ""; }
                 }
 
-                // For all other documents, use text parser
+                // .pptx / .pptm / .potx : fast OpenXML path (zip, slides + notes), like DOCX.
+                if (ext == ".pptx" || ext == ".pptm" || ext == ".potx" || ext == ".potm" || ext == ".ppsx" || ext == ".ppsm")
+                {
+                    try
+                    {
+                        string presult = ParsePptxFast(fileInfo.FullName);
+                        if (!string.IsNullOrEmpty(presult)) return presult;
+                    }
+                    catch (Exception ex) { Mq.Trace($"PPTX fast parse failed for {fileInfo.Name}: {ex.Message}"); }
+                    return ParseWithTextParser(fileInfo); // repli sur Toxy
+                }
+
+                // PDF and legacy binary .ppt go through Toxy's own parsers.
                 return ParseWithTextParser(fileInfo);
             }
             catch
@@ -319,7 +338,53 @@ namespace SnaffCore.Classifiers
             }
             return sb.ToString();
         }
-        
+
+        // PowerPoint text without a DOM: read ppt/slides/slideN.xml (and notes/comments),
+        // paragraph -> newline, then strip tags. Slides are read in numeric order.
+        // Upper bound on extracted text, so one huge document cannot blow up memory.
+        // Scales with MaxSizeToGrep (default 1 MB file -> 8M chars).
+        private static long ParsedTextLimit => Math.Max(MyOptions.MaxSizeToGrep * 8, 1024 * 1024);
+
+        // ReadToEnd with a ceiling, for XML parts inside Office/ODF zips.
+        private static string ReadCapped(System.IO.StreamReader reader, long cap)
+        {
+            var sb = new System.Text.StringBuilder();
+            char[] buffer = new char[81920];
+            int read;
+            while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                long room = cap - sb.Length;
+                if (read >= room) { sb.Append(buffer, 0, (int)room); break; }
+                sb.Append(buffer, 0, read);
+            }
+            return sb.ToString();
+        }
+
+        private string ParsePptxFast(string filePath)
+        {
+            var sb = new System.Text.StringBuilder();
+            long cap = ParsedTextLimit;
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(filePath))
+            {
+                foreach (var entry in zip.Entries
+                    .Where(e => PptxTextParts.IsMatch(e.FullName))
+                    .OrderBy(e => e.FullName, System.StringComparer.OrdinalIgnoreCase))
+                {
+                    using (var st = entry.Open())
+                    using (var r = new System.IO.StreamReader(st))
+                    {
+                        string xml = ReadCapped(r, cap * 2);
+                        xml = PptxSeparators.Replace(xml, "\n");
+                        xml = XmlTags.Replace(xml, "");
+                        sb.Append(System.Net.WebUtility.HtmlDecode(xml));
+                        sb.Append('\n');
+                        if (sb.Length >= cap) break;
+                    }
+                }
+            }
+            return sb.ToString();
+        }
+
         // OpenDocument text extraction: content.xml (+ styles.xml for headers/footers).
         // Cells -> tab, rows/paragraphs -> newline, matching the Office parsers so the
         // credential-table extraction works the same way. Encrypted documents are reported.

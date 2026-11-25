@@ -11,6 +11,7 @@ static class FormatRegression
         string dir = Path.Combine(Path.GetTempPath(), "shareauditor-format-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         string marker = "ghp_" + new string('K', 24);
+        string marker2 = "ghp_" + new string('N', 24);
         int failed = 0, total = 0;
         const string odfNs = "xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\" xmlns:table=\"urn:oasis:names:tc:opendocument:xmlns:table:1.0\"";
         try
@@ -45,6 +46,23 @@ static class FormatRegression
                 }
                 Check($"Word {part} scanned", () => Found(docx, "KeepGitHubToken"));
             }
+
+            // PowerPoint: token on a slide, and a second token only in the slide notes
+            const string aNs = "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
+            string pptx = Path.Combine(dir, "deck.pptx");
+            using (var zip = ZipFile.Open(pptx, ZipArchiveMode.Create))
+            {
+                Write(zip, "ppt/slides/slide1.xml", $"<p:sld xmlns:p=\"x\"><p:cSld><p:spTree><a:p {aNs}><a:r><a:t>intro {marker}</a:t></a:r></a:p></p:spTree></p:cSld></p:sld>");
+                Write(zip, "ppt/notesSlides/notesSlide1.xml", $"<p:notes><a:p {aNs}><a:r><a:t>note {marker2}</a:t></a:r></a:p></p:notes>");
+            }
+            Check("PowerPoint slide text (.pptx)", () => Found(pptx, "KeepGitHubToken"));
+            string notesOnly = Path.Combine(dir, "notesonly.pptx");
+            using (var zip = ZipFile.Open(notesOnly, ZipArchiveMode.Create))
+            {
+                Write(zip, "ppt/slides/slide1.xml", $"<p:sld xmlns:p=\"x\"><p:cSld><p:spTree><a:p {aNs}><a:r><a:t>nothing sensitive here</a:t></a:r></a:p></p:spTree></p:cSld></p:sld>");
+                Write(zip, "ppt/notesSlides/notesSlide1.xml", $"<p:notes><a:p {aNs}><a:r><a:t>note {marker}</a:t></a:r></a:p></p:notes>");
+            }
+            Check("PowerPoint speaker notes (.pptx)", () => Found(notesOnly, "KeepGitHubToken"));
 
             void Check(string name, Func<bool> test)
             {

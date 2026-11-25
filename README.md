@@ -27,6 +27,7 @@ Les ajouts de ce fork portent sur les points suivants ; ils s’ajoutent aux fon
 | **Règles francophones** | Recherche dans les noms de fichiers, le texte et les en-têtes de tableaux de mots de passe. |
 | **Analyse de contenu groupée** | Lecture du contenu mutualisée entre plusieurs règles d’un même relais, pour réduire les lectures répétées. |
 | **Lecture bureautique retravaillée** | ExcelDataReader pour lire les classeurs ligne par ligne ; extraction directe du XML des DOCX, avec prise en compte des tableaux, en-têtes, pieds de page, notes de bas de page, notes de fin et commentaires. |
+| **PDF et PowerPoint** | Les PDF (texte) et les présentations `.pptx`/`.pptm`/`.potx`/`.ppsx` (diapos, notes du présentateur, commentaires) sont analysés ; `.ppt` binaire via Toxy. |
 | **Formats OpenDocument** | Fichiers LibreOffice `.odt`, `.ods`, `.odp`, `.ott`, `.ots` analysés sans bibliothèque supplémentaire ; les documents chiffrés sont signalés en `PasswordProtectedFile`. |
 | **Gestion des ressources** | Files de messages bornées, contenu complet conservé seulement pour l’export Excel, fermeture de handles et suppression de collectes mémoire forcées bloquantes. |
 | **Concurrence et suivi du scan** | Choix automatique du nombre de workers, option `-x` pour le fixer, compteurs de tâches et suivi du débit, de la progression et de la mémoire. |
@@ -198,6 +199,7 @@ Ce test de régression charge les règles TOML par défaut et utilise le moteur 
 - Le parsing prend en charge les formats Office et OpenDocument sélectionnés par les relais. Les PDF, présentations PowerPoint, PST/OST, bases SQLite, OneNote et images (OCR) ne sont pas analysés par les règles par défaut.
 - L’analyse d’archives extrait chaque membre dans le dossier temporaire de l’utilisateur, puis le supprime. La date et la taille affichées sont celles du membre. L’option `-m` (copie des fichiers retenus) copie le membre extrait, rangé sous le chemin de l’archive.
 - Des tâches réseau considérées comme bloquées peuvent être abandonnées. Les accès refusés, erreurs d’E/S et timeouts peuvent donc laisser un scan incomplet ; consulter les journaux.
+- La mémoire est le prix du parcours parallèle : environ 600 Mo sur un corpus de 50 000 fichiers avec 8 workers, contre ~160 Mo pour Snaffler. Les modes GC testés (serveur, `ConserveMemory`, workstation) ne changent pas ce pic ; baisser `-x` réduit la mémoire au prix du débit.
 - Le nombre de workers automatique est un point de départ. Sur un serveur SMB lent ou avec de gros documents, fixer une valeur prudente avec `-x`, par exemple `-x 4`.
 
 ## Contribution et données locales

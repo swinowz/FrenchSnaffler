@@ -41,6 +41,24 @@ Les ajouts de ce fork portent sur les points suivants ; ils s’ajoutent aux fon
 
 Ces changements visent à réduire le coût des scans et à faciliter le traitement des résultats. Aucun gain chiffré universel n’est annoncé : le débit dépend du réseau, des documents, des règles et des ressources disponibles. L’export Excel conserve le classeur en mémoire ; ce n’est pas une sortie à mémoire constante.
 
+## Comparatif avec Snaffler
+
+Mesure du 25 novembre 2026, sur la même VM Windows 11 (2 vCPU, 8 Go) et le même corpus synthétique de 50 292 fichiers (1,8 Go, 462 dossiers). Les deux outils tournent avec leurs réglages par défaut et `-r 1000000`, en 3 passes alternées (médianes).
+
+| | Snaffler 1.0.244 (release officielle) | ShareAuditor |
+|---|---|---|
+| Temps de travail réel (fin de l’activité CPU) | 13,0 s | **10,8 s** |
+| CPU consommé | 21,3 s | **15,7 s** |
+| Durée jusqu’à la fin du programme | ~301 s | **10,8 s** |
+| Détections | 2 974 | 1 740 |
+
+- À travail égal, ShareAuditor est environ 1,2 fois plus rapide et consomme un quart de CPU en moins.
+- Snaffler attend son contrôle de fin périodique (5 minutes par défaut, option `-e`) avant de s’arrêter ; ShareAuditor vérifie la fin du scan toutes les 2 secondes.
+- Les détections supplémentaires de Snaffler sont la clé d’exemple publique d’AWS (`AKIAIOSFODNN7EXAMPLE`, 1 854 fois) et des doublons d’une même règle sur un même fichier (459). Aucun fichier signalé par Snaffler n’est absent du rapport de ShareAuditor ; ShareAuditor signale en plus 10 classeurs Excel contenant des identifiants, que Snaffler ne lit pas.
+- Snaffler consomme moins de mémoire sur ce corpus (environ 160 Mo contre 520 à 600 Mo), en raison du parallélisme et du GC serveur.
+
+Ces chiffres dépendent du corpus : sur des partages réseau, la latence SMB pèse davantage que le CPU.
+
 ## Démarrage rapide
 
 Depuis PowerShell, dans le dossier de publication :

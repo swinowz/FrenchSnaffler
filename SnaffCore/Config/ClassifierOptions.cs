@@ -135,7 +135,6 @@ namespace SnaffCore.Config
 
                 if (classifier.RelayTargets != null)
                 {
-                    int max = 0;
                     foreach (string relayTarget in classifier.RelayTargets)
                     {
                         try
@@ -151,7 +150,7 @@ namespace SnaffCore.Config
                                 return true;
                             }
                         }
-                        catch (Exception e)
+                        catch (Exception)
                         {
                             throw new Exception("You have a misconfigured rule trying to relay to " + relayTarget + " and no such rule exists by that name.");
                         }

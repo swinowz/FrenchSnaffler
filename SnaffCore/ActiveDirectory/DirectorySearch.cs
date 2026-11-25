@@ -24,7 +24,6 @@ namespace SnaffCore.ActiveDirectory.LDAP
         private readonly int _ldapPort;
         private readonly bool _secureLdap;
         private Dictionary<string, string> _domainGuidMap;
-        private bool _isFaulted;
         private DirectoryContext _context;
 
         private readonly string _baseLdapPath;
@@ -136,7 +135,7 @@ namespace SnaffCore.ActiveDirectory.LDAP
                     {
                         searchResponse = (SearchResponse)connection.SendRequest(searchRequest);
                     }
-                    catch (Exception e)
+                    catch (Exception)
                     {
                         //Console.WriteLine(ldapFilter);
                         //Console.WriteLine("\nUnexpected exception occured:\n\t{0}: {1}",
@@ -287,10 +286,9 @@ namespace SnaffCore.ActiveDirectory.LDAP
 
                 _domain = Domain.GetDomain(_context);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 //Console.WriteLine(e.ToString());
-                _isFaulted = true;
             }
         }
 

@@ -18,7 +18,6 @@ namespace SnaffCore.ActiveDirectory
         private Dictionary<string, string> _dfsSharesDict;
         private List<string> _dfsNamespacePaths;
         private Domain _currentDomain;
-        private string _domainName;
         private string _targetDomain;
         private string _targetDc;
         private string _targetDomainNetBIOSName;
@@ -284,7 +283,7 @@ namespace SnaffCore.ActiveDirectory
                                 continue;
                             }
                         }
-                        catch (Exception e)
+                        catch (Exception)
                         {
                             Mq.Error("Error calculating lastLogonTimeStamp for computer account " + resEnt.DistinguishedName);
                         }

@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -14,7 +14,16 @@
     <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Perf/memoire : Server GC + concurrent + DATAS (redimensionne dynamiquement le tas) -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DATAS : Dynamic Adaptation To Application Sizes (reduit l'empreinte du Server GC) -->
+    <RuntimeHostConfigurationOption Include="System.GC.DynamicAdaptationMode" Value="1" Trim="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CommandLineArgumentsParser" Version="3.0.23" />

@@ -1,0 +1,36 @@
+# Complete the existing language/config/Office relays for extensionless files
+# and shell/IaC extensions that they do not cover.
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "RelayModernCloudFilesByName"
+MatchAction = "Relay"
+RelayTargets = ["KeepGitHubToken", "KeepGoogleApiKey", "KeepAzureClientSecret", "KeepJwtToken", "KeepKubernetesConfig"]
+Description = "Inspect extensionless environment, Kubernetes and credential configuration files."
+MatchLocation = "FileName"
+WordListType = "Regex"
+WordList = ['^\.env(?:\..+)?$', '^config$', '^credentials$']
+Triage = "Green"
+
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "RelayModernCloudFilesByExtension"
+MatchAction = "Relay"
+RelayTargets = ["KeepGitHubToken", "KeepGoogleApiKey", "KeepAzureClientSecret", "KeepJwtToken", "KeepKubernetesConfig"]
+Description = "Inspect shell scripts and infrastructure-as-code files for cloud credentials."
+MatchLocation = "FileExtension"
+WordListType = "Exact"
+WordList = ['\.sh', '\.bash', '\.zsh', '\.tf', '\.hcl']
+Triage = "Green"
+
+# Keep Docker's generic auth/password fields scoped to Docker configuration,
+# rather than treating arbitrary application usernames/passwords as registry secrets.
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "RelayDockerRegistryCredentialsByPath"
+MatchAction = "Relay"
+RelayTargets = ["KeepDockerRegistryCredential"]
+Description = "Inspect Docker registry authentication in .docker/config.json and legacy .dockercfg files."
+MatchLocation = "FilePath"
+WordListType = "Regex"
+WordList = ['(?:^|[\\/])\.docker[\\/]config\.json$', '(?:^|[\\/])\.dockercfg$']
+Triage = "Yellow"

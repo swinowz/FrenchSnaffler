@@ -4,6 +4,11 @@ RuleName = "RelayConfigByExtension"
 MatchAction = "Relay"
 RelayTargets = [
 "KeepAwsKeysInCode",
+"KeepGitHubToken",
+"KeepGoogleApiKey",
+"KeepAzureClientSecret",
+"KeepJwtToken",
+"KeepKubernetesConfig",
 "KeepInlinePrivateKey",
 "KeepPassOrKeyInCode",  
 "KeepSlackTokensInCode",

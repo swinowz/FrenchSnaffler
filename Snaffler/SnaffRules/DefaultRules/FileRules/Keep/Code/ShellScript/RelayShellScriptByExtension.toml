@@ -5,6 +5,11 @@ MatchAction = "Relay"
 RelayTargets = [
 #"KeepShellScriptCredentials",
 "KeepAwsKeysInCode",
+"KeepGitHubToken",
+"KeepGoogleApiKey",
+"KeepAzureClientSecret",
+"KeepJwtToken",
+"KeepKubernetesConfig",
 "KeepInlinePrivateKey",
 "KeepPassOrKeyInCode",  "KeepSlackTokensInCode",
 "KeepSqlAccountCreation" ]

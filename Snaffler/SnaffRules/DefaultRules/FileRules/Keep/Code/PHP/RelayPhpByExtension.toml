@@ -4,6 +4,11 @@ RuleName = "RelayPhpByExtension"
 MatchAction = "Relay"
 RelayTargets = ["KeepPhpDbConnStrings",
 "KeepAwsKeysInCode",
+"KeepGitHubToken",
+"KeepGoogleApiKey",
+"KeepAzureClientSecret",
+"KeepJwtToken",
+"KeepKubernetesConfig",
 "KeepInlinePrivateKey",
 "KeepPassOrKeyInCode",  "KeepSlackTokensInCode",
 "KeepSqlAccountCreation",

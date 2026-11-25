@@ -4,6 +4,11 @@ RuleName = "RelayRubyByExtension"
 MatchAction = "Relay"
 RelayTargets = ["KeepRubyDbConnStrings",
 "KeepAwsKeysInCode",
+"KeepGitHubToken",
+"KeepGoogleApiKey",
+"KeepAzureClientSecret",
+"KeepJwtToken",
+"KeepKubernetesConfig",
 "KeepInlinePrivateKey",
 "KeepPassOrKeyInCode",  "KeepSlackTokensInCode",
 "KeepSqlAccountCreation",

@@ -4,6 +4,11 @@ RuleName = "RelayVBScriptByExtension"
 MatchAction = "Relay"
 RelayTargets = ["KeepCmdCredentials",
 "KeepAwsKeysInCode",
+"KeepGitHubToken",
+"KeepGoogleApiKey",
+"KeepAzureClientSecret",
+"KeepJwtToken",
+"KeepKubernetesConfig",
 "KeepInlinePrivateKey",
 "KeepPassOrKeyInCode",  "KeepSlackTokensInCode",
 "KeepSqlAccountCreation",

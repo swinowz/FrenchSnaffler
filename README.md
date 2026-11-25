@@ -169,19 +169,24 @@ Pour partir d’une configuration correspondant à la version exécutée :
 
 La configuration expose aussi `MaxArchiveDepth` (3), `MaxArchiveEntries` (10 000), `MaxArchiveEntryBytes` (50 Mio) et `MaxArchiveTotalBytes` (500 Mio). La profondeur compte les archives imbriquées depuis l’archive trouvée sur le partage, et le budget `MaxArchiveTotalBytes` est partagé par toute cette arborescence. La taille de chaque membre est vérifiée pendant la copie : une taille déclarée mensongère ne permet pas de dépasser la limite.
 
+## Télécharger
+
+La dernière version compilée est publiée dans les [Releases](https://github.com/swinowz/FrenchSnaffler/releases) : un seul `ShareAuditor.exe` autonome (Windows x64, runtime .NET inclus, rien à installer sur la cible). Le SHA-256 est indiqué sur la page de la release.
+
 ## Compiler et publier
 
 Prérequis : **SDK .NET 10**, accès aux paquets NuGet et Windows x64 pour exécuter l’outil. Depuis la racine du dépôt :
 
 ```powershell
-git clone https://github.com/swinowz/Snaffler.git
-cd Snaffler
+git clone https://github.com/swinowz/FrenchSnaffler.git
+cd FrenchSnaffler
 
-# Publication autonome Windows x64 : pas de runtime à installer sur la cible
-dotnet publish .\Snaffler\Snaffler.csproj -c Release -r win-x64 --self-contained true -o .\publish-release
+# Release en un seul fichier (recommandé) : un ShareAuditor.exe autonome
+dotnet publish .\Snaffler\Snaffler.csproj -p:PublishProfile=release-single
+# -> release\net10.0-windows\win-x64\publish\ShareAuditor.exe
 ```
 
-Le dossier `publish-release` contient `ShareAuditor.exe` et ses dépendances : **copier le dossier complet**. Les règles par défaut sont embarquées. Le projet reste organisé en `Snaffler` (CLI et règles) et `SnaffCore` (découverte, analyse et sorties) ; ces noms internes sont historiques.
+Le profil `release-single` produit **un seul fichier** `ShareAuditor.exe` (~61 Mo), règles par défaut embarquées. Une publication ordinaire (`-c Release -r win-x64 --self-contained`) crée un dossier à copier en entier. Le projet reste organisé en `Snaffler` (CLI et règles) et `SnaffCore` (découverte, analyse et sorties) ; ces noms internes sont historiques.
 
 La commande compile la branche actuellement extraite. Les fonctions décrites pour une branche de développement nécessitent que ces sources aient été intégrées à la branche récupérée ; une ancienne publication peut encore cibler .NET 8.
 

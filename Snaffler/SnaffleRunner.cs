@@ -5,7 +5,6 @@ using NLog.Targets;
 using SnaffCore;
 using SnaffCore.Concurrency;
 using SnaffCore.Config;
-using SnaffCore.ExcelExport;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -22,7 +21,6 @@ namespace ShareAuditor
         private BlockingMq Mq { get; set; }
         private LogLevel LogLevel { get; set; }
         private Options Options { get; set; }
-        private ExcelReportGenerator _excelReportGenerator;
 
         private string _hostString;
 
@@ -151,7 +149,7 @@ namespace ShareAuditor
                     {
                         nlogConfig.AddRule(LogLevel, LogLevel.Fatal, logconsole);
                     }
-                    logconsole.Layout = "${message}";
+                    logconsole.Layout = "${message:raw=true}";
                 }
 
                 if (Options.LogToFile)
@@ -165,14 +163,17 @@ namespace ShareAuditor
                     {
                         nlogConfig.AddRule(LogLevel, LogLevel.Fatal, logfile);
                     }
+                    // Log lines are passed to NLog as message templates with the
+                    // SnafflerMessage as argument: "{Red}" in a result would be replaced
+                    // by that argument. Render the text raw; eventProperties keep the object.
                     if (Options.LogType == LogType.Plain)
                     {
-                        logfile.Layout = "${message}";
+                        logfile.Layout = "${message:raw=true}";
                     }
                     else if (Options.LogType == LogType.JSON)
                     {
                         var eventProperties = new JsonLayout();
-                        eventProperties.IncludeAllProperties = true;
+                        eventProperties.IncludeEventProperties = true;
                         eventProperties.MaxRecursionLimit = 5;
                         var jsonLayout = new JsonLayout
                         {
@@ -180,7 +181,7 @@ namespace ShareAuditor
                             {
                                 new JsonAttribute("time", "${longdate}"),
                                 new JsonAttribute("level", "${level}"),
-                                new JsonAttribute("message", "${message}"),
+                                new JsonAttribute("message", "${message:raw=true}"),
                                 new JsonAttribute("eventProperties", eventProperties,
                                 //don't escape layout
                                 false)
@@ -195,7 +196,7 @@ namespace ShareAuditor
 
                 //-------------------------------------------
 
-                // Initialize Excel report generator if -t auto is used
+                // Initialize CSV/Excel output if -t auto is used
                 if (Options.LogType == LogType.Auto)
                 {
                     string excelOutputPath = Options.LogFilePath;
@@ -208,8 +209,9 @@ namespace ShareAuditor
                     {
                         excelOutputPath = Path.ChangeExtension(excelOutputPath, ".xlsx");
                     }
-                    _excelReportGenerator = new ExcelReportGenerator(excelOutputPath, Mq);
-                    Mq.Info($"Excel report will be generated at: {excelOutputPath}");
+                    // Direct CSV streaming - bypasses memory accumulation
+                    Mq.InitCsvOutput(excelOutputPath);
+                    Mq.Info($"Direct CSV streaming enabled: {Path.ChangeExtension(excelOutputPath, ".csv")}");
                 }
 
                 if (Options.Snaffle && (Options.SnafflePath.Length > 4))
@@ -276,26 +278,19 @@ namespace ShareAuditor
                 }
                 else if (Options.LogType == LogType.Auto)
                 {
-                    // Process for Excel output - also log to console
+                    // CSV is written directly in BlockingMq.FileResult() - just log to console
                     ProcessMessage(message);
                     
-                    // Add file results to Excel report
-                    if (message.Type == SnafflerMessageType.FileResult && _excelReportGenerator != null)
-                    {
-                        _excelReportGenerator.AddFinding(message.FileResult);
-                    }
-                    
-                    // Generate Excel report on finish
-                    if (message.Type == SnafflerMessageType.Finish && _excelReportGenerator != null)
+                    // Finalize CSV on finish
+                    if (message.Type == SnafflerMessageType.Finish)
                     {
                         try
                         {
-                            _excelReportGenerator.Generate();
-                            Mq.Info("Excel report generated successfully.");
+                            Mq.FinalizeCsv();
                         }
                         catch (Exception ex)
                         {
-                            Mq.Error($"Failed to generate Excel report: {ex.Message}");
+                            Mq.Error($"Failed to finalize CSV: {ex.Message}");
                         }
                     }
                 }
@@ -410,7 +405,9 @@ namespace ShareAuditor
                     if (Options.LogType == LogType.JSON) 
                     {
                         Logger.Info("Normalising output, please wait...");
-                        FixJSONOutput();
+                        LogManager.Flush(TimeSpan.FromSeconds(5));
+                        LogManager.Shutdown();
+                        JsonReport.Normalize(Options.LogFilePath);
                     }
                     break;
             }
@@ -488,14 +485,21 @@ namespace ShareAuditor
                     fileSizeString = BytesToString(fileSize);
                 }
 
-                string filepath = message.FileResult.FileInfo.FullName;
+                string filepath = message.FileResult.ReportPath;
 
                 string matchcontext = "";
                 if (message.FileResult.TextResult != null)
                 {
-                    matchedstring = message.FileResult.TextResult.MatchedStrings[0];
-                    matchcontext = message.FileResult.TextResult.MatchContext;
-                    matchcontext = Regex.Replace(matchcontext, @"\r\n?|\n", "\\n"); // Replace newlines with \n for consistent log lines
+                    // Handle null MatchedStrings (content freed for memory savings)
+                    if (message.FileResult.TextResult.MatchedStrings != null && message.FileResult.TextResult.MatchedStrings.Count > 0)
+                    {
+                        matchedstring = message.FileResult.TextResult.MatchedStrings[0] ?? "";
+                    }
+                    matchcontext = message.FileResult.TextResult.MatchContext ?? "";
+                    if (!string.IsNullOrEmpty(matchcontext))
+                    {
+                        matchcontext = Regex.Replace(matchcontext, @"\r\n?|\n", "\\n");
+                    }
                 }
 
                 return string.Format(fileResultTemplate, triageString, matchedclassifier, canread, canwrite, canmodify, matchedstring, fileSizeString, modifiedStamp,
@@ -504,7 +508,7 @@ namespace ShareAuditor
             catch (Exception e)
             {
                 Console.WriteLine(e.ToString());
-                Console.WriteLine(message.FileResult.FileInfo.FullName);
+                Console.WriteLine(message.FileResult.ReportPath);
                 return "";
             }
         }
@@ -604,32 +608,5 @@ namespace ShareAuditor
             Console.WriteLine("\n");
         }
 
-        //This is probably slow but it is a quick and easy fix for now.
-        private void FixJSONOutput() 
-        {
-            //Rename the log file temporarily
-            File.Move(Options.LogFilePath, Options.LogFilePath + ".tmp");
-            //Prepare the normalised file
-            StreamWriter file = new StreamWriter(Options.LogFilePath);
-            //Read in the original log file to an array
-            string[] lines = System.IO.File.ReadAllLines(Options.LogFilePath + ".tmp");
-            //Write the surrounding template that we need.
-            file.Write("{\"entries\": [\n");
-            //Write all the lines into the new file but add a comma after all but the last so it becomes valid JSON.
-            for (int ii = 0; ii < lines.Length -1; ii++)
-            {
-                file.WriteLine(lines[ii] + ",");
-            }
-            //Add the last line but without a comma
-            file.WriteLine(lines[lines.Length - 1]);
-            //Close out the file's contents with the last of the JSON to make it valid.
-            file.Write("]\n}");
-            //Flush the output
-            file.Flush();
-            //Close the file
-            file.Close();
-            //Delete the temporary file.
-            File.Delete(Options.LogFilePath + ".tmp");
-        }
     }
 }

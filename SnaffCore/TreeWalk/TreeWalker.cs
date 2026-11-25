@@ -32,10 +32,25 @@ namespace SnaffCore.TreeWalk
                  return;
              }
 
+            // Direct directory enumeration - no timeout (let the OS handle it)
+            string[] files = null;
+            string[] subDirs = null;
+            
             try
             {
-                string[] files = Directory.GetFiles(currentDir);
-                // check if we actually like the files
+                files = Directory.GetFiles(currentDir);
+            }
+            catch (UnauthorizedAccessException) { }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
+            catch (Exception e)
+            {
+                Mq.Trace(e.ToString());
+            }
+
+            // Queue files for scanning
+            if (files != null)
+            {
                 foreach (string file in files)
                 {
                     FileTaskScheduler.New(() =>
@@ -52,97 +67,64 @@ namespace SnaffCore.TreeWalk
                     });
                 }
             }
-            catch (UnauthorizedAccessException)
-            {
-                //Mq.Trace(e.ToString());
-                //continue;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                //Mq.Trace(e.ToString());
-                //continue;
-            }
-            catch (IOException)
-            {
-                //Mq.Trace(e.ToString());
-                //continue;
-            }
-            catch (Exception e)
-            {
-                Mq.Degub(e.ToString());
-                //continue;
-            }
 
             try
             {
-                string[] subDirs = Directory.GetDirectories(currentDir);
-                // Create a new treewalker task for each subdir.
-                if (subDirs.Length >= 1)
-                {
-
-                    foreach (string dirStr in subDirs)
-                    {
-                        bool scanDir = true;
-                        foreach (ClassifierRule classifier in MyOptions.DirClassifiers)
-                        {
-                            try
-                            {
-                                DirClassifier dirClassifier = new DirClassifier(classifier);
-                                DirResult dirResult = dirClassifier.ClassifyDir(dirStr);
-
-                                if (dirResult.ScanDir == false)
-                                {
-                                    scanDir = false;
-                                    break;
-                                }
-                            }
-                            catch (Exception e)
-                            {
-                                Mq.Trace(e.ToString());
-                                continue;
-                            }
-                        }
-                        if (scanDir == true)
-                        {
-                            TreeTaskScheduler.New(() =>
-                            {
-                                try
-                                {
-                                    WalkTree(dirStr);
-                                }
-                                catch (Exception e)
-                                {
-                                    Mq.Error("Exception in TreeWalker task for dir " + dirStr);
-                                    Mq.Error(e.ToString());
-                                }
-                            });
-                        }
-                        else
-                        {
-                            Mq.Trace("Skipped scanning on " + dirStr + " due to Discard rule match.");
-                        }
-                    }
-                }
+                subDirs = Directory.GetDirectories(currentDir);
             }
-            catch (UnauthorizedAccessException)
-            {
-                //Mq.Trace(e.ToString());
-                //continue;
-            }
-            catch (DirectoryNotFoundException)
-            {
-                //Mq.Trace(e.ToString());
-                //continue;
-            }
-            catch (IOException)
-            {
-                //Mq.Trace(e.ToString());
-                //continue;
-            }
+            catch (UnauthorizedAccessException) { }
+            catch (DirectoryNotFoundException) { }
+            catch (IOException) { }
             catch (Exception e)
             {
                 Mq.Trace(e.ToString());
-                //continue;
+            }
+
+            // Queue subdirectories for walking
+            if (subDirs != null && subDirs.Length >= 1)
+            {
+                foreach (string dirStr in subDirs)
+                {
+                    bool scanDir = true;
+                    foreach (ClassifierRule classifier in MyOptions.DirClassifiers)
+                    {
+                        try
+                        {
+                            DirClassifier dirClassifier = new DirClassifier(classifier);
+                            DirResult dirResult = dirClassifier.ClassifyDir(dirStr);
+
+                            if (dirResult.ScanDir == false)
+                            {
+                                scanDir = false;
+                                break;
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            Mq.Trace(e.ToString());
+                            continue;
+                        }
+                    }
+                    if (scanDir == true)
+                    {
+                        TreeTaskScheduler.New(() =>
+                        {
+                            try
+                            {
+                                WalkTree(dirStr);
+                            }
+                            catch (Exception e)
+                            {
+                                Mq.Error("Exception in TreeWalker task for dir " + dirStr);
+                                Mq.Error(e.ToString());
+                            }
+                        });
+                    }
+                    else
+                    {
+                        Mq.Trace("Skipped scanning on " + dirStr + " due to Discard rule match.");
+                    }
+                }
             }
         }
     }

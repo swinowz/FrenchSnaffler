@@ -1,0 +1,28 @@
+name: build-and-test
+
+on:
+  push:
+    branches: [master, speed]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build Snaffler/Snaffler.csproj -c Release
+      - name: Regression tests
+        run: dotnet run -c Release --project tests/CloudRulesRegression
+      - name: Vulnerable packages
+        shell: pwsh
+        run: |
+          $out = dotnet list Snaffler/Snaffler.csproj package --vulnerable --include-transitive
+          $out
+          if ($out -match 'has the following vulnerable packages') { exit 1 }

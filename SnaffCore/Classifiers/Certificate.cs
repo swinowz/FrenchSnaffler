@@ -59,20 +59,14 @@ namespace SnaffCore.Classifiers
 
         public static X509Certificate2 GetCertificateFromPEMstring(string publicCert)
         {
-            return new X509Certificate2(Encoding.UTF8.GetBytes(publicCert));
+            return X509Certificate2.CreateFromPem(publicCert);
         }
 
         public static X509Certificate2 GetCertificateFromPEMstring(string publicCert, string privateKey, string password)
         {
-            byte[] certBuffer = Helpers.GetBytesFromPEM(publicCert, PemStringType.Certificate);
-            byte[] keyBuffer = Helpers.GetBytesFromPEM(privateKey, PemStringType.RsaPrivateKey);
-
-            X509Certificate2 certificate = new X509Certificate2(certBuffer, password);
-
-            RSACryptoServiceProvider prov = Crypto.DecodeRsaPrivateKey(keyBuffer);
-            certificate.PrivateKey = prov;
-
-            return certificate;
+            return string.IsNullOrEmpty(password)
+                ? X509Certificate2.CreateFromPem(publicCert, privateKey)
+                : X509Certificate2.CreateFromEncryptedPem(publicCert, privateKey, password);
         }
 
     }
@@ -148,7 +142,7 @@ namespace SnaffCore.Classifiers
                 int end = pemString.IndexOf(footer, start) - start;
                 return Convert.FromBase64String(pemString.Substring(start, end));
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 
             }

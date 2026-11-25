@@ -1,7 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -14,15 +14,21 @@
 
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.104.1" />
-    <PackageReference Include="Toxy" Version="2.5.0" />
-    <PackageReference Include="SharpCompress" Version="0.38.0" />
-    <PackageReference Include="System.DirectoryServices" Version="8.0.0" />
-    <PackageReference Include="System.DirectoryServices.Protocols" Version="8.0.0" />
-    <PackageReference Include="System.DirectoryServices.AccountManagement" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Windows.Compatibility" Version="8.0.7" />
+    <PackageReference Include="EPPlus" Version="7.5.2" />
+    <PackageReference Include="Toxy" Version="2.6.0" />
+    <!-- Keep Toxy's parsers on maintained versions: older NPOI/MsgReader bring
+         vulnerable ImageSharp/OpenMcdf dependencies into the published app. -->
+    <PackageReference Include="NPOI" Version="2.8.1" />
+    <PackageReference Include="MsgReader" Version="6.2.1" />
+    <PackageReference Include="ExcelDataReader" Version="3.7.0" /><!-- lecture xlsx/xls en STREAMING (faible RAM) -->
+    <PackageReference Include="SharpCompress" Version="0.50.12" />
+    <PackageReference Include="System.DirectoryServices" Version="10.0.15" />
+    <PackageReference Include="System.DirectoryServices.Protocols" Version="10.0.15" />
+    <PackageReference Include="System.DirectoryServices.AccountManagement" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Windows.Compatibility" Version="10.0.15" />
     <PackageReference Include="Tomlyn" Version="0.17.0" />
     <PackageReference Include="Nett" Version="0.15.0" />
-    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.15" />
   </ItemGroup>
 
 </Project>

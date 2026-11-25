@@ -79,7 +79,6 @@ namespace SnaffCore.Classifiers
                 }
             }
 
-            FileResult fileResult;
             // if it matches, see what we're gonna do with it
             switch (ClassifierRule.MatchAction)
             {
@@ -91,7 +90,6 @@ namespace SnaffCore.Classifiers
                     return false;
             }
 
-            return false;
         }
 
         public bool SizeMatch(FileInfo fileInfo)

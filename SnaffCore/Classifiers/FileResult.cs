@@ -11,6 +11,9 @@ namespace SnaffCore.Classifiers
         public TextResult TextResult { get; set; }
         public RwStatus RwStatus { get; set; }
         public ClassifierRule MatchedRule { get; set; }
+        // Path shown in reports. For archive members: archive.zip!dir\file.
+        public string DisplayPath { get; set; }
+        public string ReportPath => DisplayPath ?? FileInfo?.FullName;
 
         public FileResult(FileInfo fileInfo)
         {
@@ -20,16 +23,19 @@ namespace SnaffCore.Classifiers
             //this.RwStatus = effPerms.CanRw(fileInfo);
             try
             {
-                File.OpenRead(fileInfo.FullName);
+                using (File.OpenRead(fileInfo.FullName)) { }
                 this.RwStatus = new RwStatus() { CanRead = true, CanModify = false, CanWrite = false };
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 this.RwStatus = new RwStatus() { CanModify = false, CanRead = false, CanWrite = false };
             }
 
             // nasty debug
             this.FileInfo = fileInfo;
+#if ULTRASNAFFLER
+            this.DisplayPath = ArchiveClassifier.GetDisplayPath(fileInfo.FullName);
+#endif
 
             // this is where we actually automatically grab a copy of the file if wanted.
             if (MyOptions.Snaffle)
@@ -44,8 +50,8 @@ namespace SnaffCore.Classifiers
         public void SnaffleFile(FileInfo fileInfo, string snafflePath)
         {
             string sourcePath = fileInfo.FullName;
-            // clean it up and normalise it a bit
-            string cleanedPath = sourcePath.Replace(':', '.').Replace('$', '.').Replace("\\\\", "\\");
+            // clean it up and normalise it a bit (archive members keep the archive's path)
+            string cleanedPath = (DisplayPath ?? sourcePath).Replace(':', '.').Replace('$', '.').Replace("\\\\", "\\");
             cleanedPath = cleanedPath.TrimStart('\\');
             //string cleanedPath = Path.GetFullPath(sourcePath.Replace(':', '.').Replace('$', '.'));
 

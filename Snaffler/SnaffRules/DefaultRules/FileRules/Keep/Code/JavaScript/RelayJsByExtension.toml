@@ -3,6 +3,11 @@ EnumerationScope = "FileEnumeration"
 RuleName = "RelayJsByExtension"
 MatchAction = "Relay"
 RelayTargets = ["KeepAwsKeysInCode",
+"KeepGitHubToken",
+"KeepGoogleApiKey",
+"KeepAzureClientSecret",
+"KeepJwtToken",
+"KeepKubernetesConfig",
 "KeepInlinePrivateKey",
 "KeepPassOrKeyInCode",  "KeepSlackTokensInCode",
 "KeepSqlAccountCreation",

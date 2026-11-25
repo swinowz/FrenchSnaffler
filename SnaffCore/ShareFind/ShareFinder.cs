@@ -176,7 +176,7 @@ namespace SnaffCore.ShareFind
                                 }
                                 */
                             }
-                            catch (System.UnauthorizedAccessException e)
+                            catch (System.UnauthorizedAccessException)
                             {
                                 Mq.Error("Failed to get permissions on " + shareResult.SharePath);
                             }

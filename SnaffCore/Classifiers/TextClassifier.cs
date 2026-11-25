@@ -23,7 +23,9 @@ namespace SnaffCore.Classifiers
             {
                 try
                 {
-                    if (regex.IsMatch(input))
+                    // Un SEUL passage regex (avant : IsMatch puis Match => 2x le travail par match)
+                    Match m = regex.Match(input);
+                    if (m.Success)
                     {
                         // Cap FullContent at 512KB for large files
                         string fullContent = input;
@@ -31,14 +33,23 @@ namespace SnaffCore.Classifiers
                         {
                             fullContent = fullContent.Substring(0, 512 * 1024);
                         }
-                        
+
                         return new TextResult()
                         {
                             MatchedStrings = new List<string>() { regex.ToString() },
-                            MatchContext = GetContext(input, regex),
-                            FullContent = fullContent
+                            MatchedValue = m.Value,
+                            MatchContext = GetContext(input, m.Index),
+                            // Full content is only needed by Excel credential extraction.
+                            // Plain/JSON/TSV output uses MatchContext and should not retain
+                            // up to 512 KB per finding.
+                            FullContent = MyOptions.LogType == SnaffCore.Config.LogType.Auto ? fullContent : null
                         };
                     }
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    // Regex trop lente sur ce fichier (backtracking) : on abandonne cette regle, on continue.
+                    Mq.Trace($"Regex timeout on rule {ClassifierRule.RuleName}");
                 }
                 catch (Exception e)
                 {
@@ -46,6 +57,24 @@ namespace SnaffCore.Classifiers
                 }
             }
             return null;
+        }
+        internal string GetContext(string original, int foundIndex)
+        {
+            try
+            {
+                int contextBytes = MyOptions.MatchContextBytes;
+                if (contextBytes == 0) return "";
+                if ((original.Length < 6) || (original.Length < contextBytes * 2)) return original;
+                int contextStart = SubtractWithFloor(foundIndex, contextBytes, 0);
+                if (original.Length <= (contextStart + (contextBytes * 2)))
+                    return Regex.Escape(original.Substring(contextStart));
+                return Regex.Escape(original.Substring(contextStart, contextBytes * 2));
+            }
+            catch (Exception e)
+            {
+                this.Mq.Error(e.ToString());
+            }
+            return "";
         }
         internal string GetContext(string original, string matchString)
         {
@@ -128,6 +157,7 @@ namespace SnaffCore.Classifiers
     public class TextResult
     {
         public List<string> MatchedStrings { get; set; }
+        public string MatchedValue { get; set; }
         public string MatchContext { get; set; }
         /// <summary>
         /// Full content of the file for credential extraction (capped at 512KB)

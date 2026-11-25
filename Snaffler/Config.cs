@@ -104,12 +104,14 @@ namespace ShareAuditor
             ValueArgument<string> compTargetArg = new ValueArgument<string>('n', "comptarget", "List of computers in a file(e.g C:\targets.txt), a single Computer (or comma separated list) to target.");
             ValueArgument<string> ruleDirArg = new ValueArgument<string>('p', "rulespath", "Path to a directory full of toml-formatted rules. ShareAuditor will load all of these in place of the default ruleset.");
             ValueArgument<string> logType = new ValueArgument<string>('t', "logtype", "Type of log you would like to output. Currently supported options are plain and JSON. Defaults to plain.");
+            ValueArgument<string> testFileArg = new ValueArgument<string>('w', "testfile", "Test credential extraction methods on a specific file. Outputs method results to console only.");
             ValueArgument<string> timeOutArg = new ValueArgument<string>('e', "timeout",
                 "Interval between status updates (in minutes) also acts as a timeout for AD data to be gathered via LDAP. Turn this knob up if you aren't getting any computers from AD when you run ShareAuditor through a proxy or other slow link. Default = 5");
-            // list of letters i haven't used yet: gnqw
+            // list of letters i haven't used yet: gnq
 
             CommandLineParser.CommandLineParser parser = new CommandLineParser.CommandLineParser();
             parser.Arguments.Add(timeOutArg);
+            parser.Arguments.Add(testFileArg);
             parser.Arguments.Add(configFileArg);
             parser.Arguments.Add(outFileArg);
             parser.Arguments.Add(helpArg);
@@ -149,6 +151,13 @@ namespace ShareAuditor
             try
             {
                 parser.ParseCommandLine(args);
+
+                // Test mode - extract credentials from single file and show methods
+                if (testFileArg.Parsed && !String.IsNullOrWhiteSpace(testFileArg.Value))
+                {
+                    TestCredentialExtraction(testFileArg.Value);
+                    return null; // Exit after test
+                }
 
                 if (timeOutArg.Parsed && !String.IsNullOrWhiteSpace(timeOutArg.Value))
                 {
@@ -267,10 +276,28 @@ namespace ShareAuditor
                 {
                     parsedConfig.MaxThreads = maxThreadsArg.Value;
                 }
+                
+                // If no -x specified, choose a safe default from CPU, memory,
+                // and whether this is a local or SMB scan.
+                if (parsedConfig.MaxThreads <= 0)
+                {
+                    parsedConfig.MaxThreads = SnaffCore.Concurrency.AdaptiveConcurrency.Calculate(
+                        parsedConfig.PathTargets, parsedConfig.ComputerTargets);
+                    Mq.Info($"Adaptive concurrency selected {parsedConfig.MaxThreads} workers");
+                }
 
-                parsedConfig.ShareThreads = parsedConfig.MaxThreads / 3;
-                parsedConfig.FileThreads = parsedConfig.MaxThreads / 3;
-                parsedConfig.TreeThreads = parsedConfig.MaxThreads / 3;
+                // Allocate more threads to FileScanner since that's the bottleneck
+                // Share: 10%, Tree: 20%, File: 70%
+                parsedConfig.ShareThreads = Math.Max(1, parsedConfig.MaxThreads / 10);
+                parsedConfig.TreeThreads = Math.Max(1, parsedConfig.MaxThreads / 5);
+                // Keep every scheduler constructible, including custom rulesets
+                // that contain only file/archive rules and small explicit -x values.
+                parsedConfig.FileThreads = Math.Max(1,
+                    parsedConfig.MaxThreads - parsedConfig.ShareThreads - parsedConfig.TreeThreads);
+                
+                // Increase .NET ThreadPool limits to handle high concurrency
+                System.Threading.ThreadPool.SetMinThreads(parsedConfig.MaxThreads, parsedConfig.MaxThreads);
+                System.Threading.ThreadPool.SetMaxThreads(parsedConfig.MaxThreads * 2, parsedConfig.MaxThreads * 2);
 
                 if (tsvArg.Parsed)
                 {
@@ -288,9 +315,12 @@ namespace ShareAuditor
                     Mq.Degub("Requested verbosity level: " + parsedConfig.LogLevelString);
                 }
 
-                // if enabled, display findings to the console
-                parsedConfig.LogToConsole = stdOutArg.Parsed;
-                Mq.Degub("Enabled logging to stdout.");
+                // Explicit console output flag
+                if (stdOutArg.Parsed)
+                {
+                    parsedConfig.LogToConsole = true;
+                    Mq.Degub("Console output enabled via -s flag.");
+                }
 
                 // args that tell us about targeting
                 if ((domainArg.Parsed) && (!String.IsNullOrEmpty(domainArg.Value)))
@@ -408,11 +438,18 @@ namespace ShareAuditor
                     }
                 }
 
+                // Default: If verbose mode is enabled but no output destination specified, use console
+                if (verboseArg.Parsed && !parsedConfig.LogToFile && !parsedConfig.LogToConsole)
+                {
+                    parsedConfig.LogToConsole = true;
+                    Mq.Info("Verbose mode enabled without output destination - defaulting to console.");
+                }
+
+                // Validation: Must have at least one output destination
                 if (!parsedConfig.LogToConsole && !parsedConfig.LogToFile)
                 {
-                    Mq.Error(
-                        "\nYou didn't enable output to file or to the console so you won't see any results or debugs or anything. Your l0ss.");
-                    throw new ArgumentException("Pointless argument combination.");
+                    Mq.Error("\nNo output destination specified. Use -s for console output or -o <file> for file output.");
+                    throw new ArgumentException("No output destination specified.");
                 }
 
                 if (parsedConfig.ClassifierRules.Count <= 0)
@@ -565,7 +602,178 @@ namespace ShareAuditor
             return parsedConfig;
         }
 
+        private static void TestCredentialExtraction(string filePath)
+        {
+            Console.WriteLine("====================================");
+            Console.WriteLine("CREDENTIAL EXTRACTION TEST MODE");
+            Console.WriteLine("====================================");
+            Console.WriteLine($"File: {filePath}\n");
 
+            if (!File.Exists(filePath))
+            {
+                Console.WriteLine($"ERROR: File not found: {filePath}");
+                return;
+            }
 
+            // Read file content - simple text read for testing
+            string content = "";
+            try
+            {
+                // For Excel files, we'll just read what ShareAuditor would normally get
+                // This simulates the TextResult.FullContent that would be passed to extraction methods
+                
+                // Just read as text for now - in real usage, the Excel parser populates this
+                content = File.ReadAllText(filePath, Encoding.Default);
+                Console.WriteLine($"Content read: {content.Length} chars");
+                Console.WriteLine($"NOTE: For .xls/.xlsx files, this is raw file bytes, not parsed content.");
+                Console.WriteLine($"      In normal operation, Toxy/ClosedXML parser provides structured text.\n");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR reading file: {ex.Message}\n");
+                return;
+            }
+
+            Console.WriteLine("Content preview (first 500 chars):");
+            string preview = content.Length > 500 ? content.Substring(0, 500) : content;
+            // Replace non-printable chars
+            preview = System.Text.RegularExpressions.Regex.Replace(preview, @"[^\x20-\x7E\t\n\r]", ".");
+            Console.WriteLine(preview);
+            Console.WriteLine();
+
+            // Test extraction methods
+            Console.WriteLine("Testing extraction methods:\n");
+
+            // Method 1: Table extraction (tab-delimited)
+            Console.WriteLine("1. TABLE EXTRACTION (Tab-delimited):");
+            TestTableExtraction(content, useSimpleTable: false);
+
+            // Method 2: Simple table extraction
+            Console.WriteLine("\n2. SIMPLE TABLE EXTRACTION:");
+            TestTableExtraction(content, useSimpleTable: true);
+
+            // Method 3: XML tag extraction
+            Console.WriteLine("\n3. XML TAG EXTRACTION:");
+            TestXmlExtraction(content);
+
+            // Method 4: Regex extraction
+            Console.WriteLine("\n4. REGEX EXTRACTION:");
+            TestRegexExtraction(content);
+
+            Console.WriteLine("\n====================================");
+            Console.WriteLine("TEST COMPLETE");
+            Console.WriteLine("====================================");
+            Console.WriteLine("\nNOTE: To see actual parsed content from .xls files,");
+            Console.WriteLine("      run a normal scan and check the CSV preview column.");
+        }
+
+        private static void TestTableExtraction(string content, bool useSimpleTable)
+        {
+            try
+            {
+                bool hasTab = content.Contains("\t");
+                bool hasNewline = content.Contains("\n");
+                Console.WriteLine($"   Has tabs: {hasTab}");
+                Console.WriteLine($"   Has newlines: {hasNewline}");
+
+                if (!hasNewline)
+                {
+                    Console.WriteLine("   RESULT: SKIPPED (no newlines)");
+                    return;
+                }
+
+                string[] lines = content.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                Console.WriteLine($"   Lines: {lines.Length}");
+
+                if (useSimpleTable)
+                {
+                    if (!hasTab && lines.Length >= 1 && lines.Length <= 3)
+                    {
+                        Console.WriteLine("   Attempting simple table extraction...");
+                        Console.WriteLine($"   Line 1: {lines[0]}");
+                        
+                        // Simulate simple table extraction logic
+                        bool hasUserKeyword = System.Text.RegularExpressions.Regex.IsMatch(string.Join(" ", lines).ToLower(), @"(username|user)");
+                        bool hasPassKeyword = System.Text.RegularExpressions.Regex.IsMatch(string.Join(" ", lines).ToLower(), @"(password|pwd|pass)");
+                        
+                        Console.WriteLine($"   Has username keyword: {hasUserKeyword}");
+                        Console.WriteLine($"   Has password keyword: {hasPassKeyword}");
+                        
+                        if (hasUserKeyword && hasPassKeyword)
+                        {
+                            Console.WriteLine("   RESULT: ✓ Keywords found - would attempt extraction");
+                        }
+                        else
+                        {
+                            Console.WriteLine("   RESULT: ✗ Missing keywords");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   RESULT: SKIPPED (has tabs or wrong line count)");
+                    }
+                }
+                else
+                {
+                    if (!hasTab)
+                    {
+                        Console.WriteLine("   RESULT: SKIPPED (no tabs)");
+                    }
+                    else
+                    {
+                        Console.WriteLine("   RESULT: ✓ Would attempt tab-delimited extraction");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   RESULT: ERROR - {ex.Message}");
+            }
+        }
+
+        private static void TestXmlExtraction(string content)
+        {
+            try
+            {
+                var pattern = new System.Text.RegularExpressions.Regex(@"<([^>]*\.)?(?<tagname>(?:ftp|smtp|excel|mail|db|sql|ldap|ssh|sftp)[._-]?(?:password|pwd))[^>]*>\s*(?<password>[^<]{3,}?)\s*</", 
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                var matches = pattern.Matches(content);
+                Console.WriteLine($"   XML password tags found: {matches.Count}");
+                if (matches.Count > 0)
+                {
+                    Console.WriteLine("   RESULT: ✓ Would extract XML credentials");
+                }
+                else
+                {
+                    Console.WriteLine("   RESULT: ✗ No XML tags found");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   RESULT: ERROR - {ex.Message}");
+            }
+        }
+
+        private static void TestRegexExtraction(string content)
+        {
+            try
+            {
+                var pwdPattern = new System.Text.RegularExpressions.Regex(@"(?i)(password|pwd|mdp|mot.?de.?passe)[\s:=\t""']+([^\s\t\n\r""']{4,50})");
+                var matches = pwdPattern.Matches(content);
+                Console.WriteLine($"   Password patterns found: {matches.Count}");
+                if (matches.Count > 0)
+                {
+                    Console.WriteLine("   RESULT: ✓ Would extract via regex");
+                }
+                else
+                {
+                    Console.WriteLine("   RESULT: ✗ No regex matches");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   RESULT: ERROR - {ex.Message}");
+            }
+        }
     }
 }

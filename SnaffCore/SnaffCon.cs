@@ -150,8 +150,14 @@ namespace SnaffCore
             }
 
             // Poll for completion with clean progress indication
+            DateTime scanStart = DateTime.Now;
+            int stuckCounter = 0;
+            int lastStuckCount = 0;
+            int pollIterations = 0;
+
             while (true)
             {
+                pollIterations++;
                 ShareTaskScheduler.Scheduler.RecalculateCounters();
                 TreeTaskScheduler.Scheduler.RecalculateCounters();
                 FileTaskScheduler.Scheduler.RecalculateCounters();
@@ -164,22 +170,66 @@ namespace SnaffCore
                 bool treeDone = TreeTaskScheduler.Done();
                 bool fileDone = FileTaskScheduler.Done();
                 
-                // Simple progress indicator every 3 seconds
+                // Progress with rate calculation
                 int totalQueued = (int)(shareCounters.CurrentTasksQueued + treeCounters.CurrentTasksQueued + fileCounters.CurrentTasksQueued);
                 int totalRunning = (int)(shareCounters.CurrentTasksRunning + treeCounters.CurrentTasksRunning + fileCounters.CurrentTasksRunning);
-                if (totalQueued > 0 || totalRunning > 0)
+                long completed = (long)fileCounters.CompletedTasks;
+                
+                // Calculate CUMULATIVE AVERAGE rate (total files / total time) - much more stable ETA
+                DateTime now = DateTime.Now;
+                double elapsedMinutes = (now - scanStart).TotalMinutes;
+                double avgRate = elapsedMinutes > 0.1 ? completed / elapsedMinutes : 0;
+                
+                // Calculate ETA based on average rate
+                string etaStr = "";
+                if (avgRate > 0 && totalQueued > 0)
                 {
-                    Mq.Info($"Progress: {totalQueued} files queued, {totalRunning} processing, {fileCounters.CompletedTasks} completed");
+                    double etaMinutes = totalQueued / avgRate;
+                    if (etaMinutes < 1)
+                        etaStr = $" | ETA: {etaMinutes * 60:F0}s";
+                    else if (etaMinutes < 60)
+                        etaStr = $" | ETA: {etaMinutes:F0}m";
+                    else
+                        etaStr = $" | ETA: {etaMinutes / 60:F1}h";
+                }
+                
+                // Get current RAM usage in MB
+                long ramBytes = System.GC.GetTotalMemory(false);
+                double ramMB = ramBytes / 1024.0 / 1024.0;
+                
+                // On sonde toutes les 2s (completion rapide) mais on n'imprime le Progress qu'~toutes les 20s
+                if ((totalQueued > 0 || totalRunning > 0) && (pollIterations % 10 == 1))
+                {
+                    Mq.Info($"Progress: {totalQueued} queued, {totalRunning} active, {completed} done | {avgRate:F0} files/min{etaStr} | RAM: {ramMB:F0}MB");
+                }
+                
+                // Force exit if queue is empty but tasks are stuck (network I/O hanging)
+                // After 3 minutes of no progress with empty queue, abandon stuck tasks
+                if (totalQueued == 0 && totalRunning > 0 && totalRunning == lastStuckCount)
+                {
+                    stuckCounter++;
+                    if (stuckCounter >= 90) // ~180s bloque (poll = 2s) avant d'abandonner les t*ches figees
+                    {
+                        Mq.Info($"Abandoning {totalRunning} stuck file scans (network I/O timeout). Scan complete.");
+                        break;
+                    }
+                }
+                else
+                {
+                    stuckCounter = 0;
+                    lastStuckCount = totalRunning;
                 }
                 
                 if (fileDone && shareDone && treeDone)
                 {
+                    TimeSpan elapsed = now - scanStart;
+                    double finalRate = elapsed.TotalMinutes > 0 ? completed / elapsed.TotalMinutes : 0;
                     Mq.Info("All scanning tasks completed.");
-                    Mq.Info($"Scanned {fileCounters.CompletedTasks} files in total.");
+                    Mq.Info($"Scanned {completed} files in {elapsed.TotalSeconds:F0}s (avg {finalRate:F0} files/min)");
                     break;
                 }
                 
-                Thread.Sleep(3000); // Check every 3 seconds
+                Thread.Sleep(2000); // Sonde toutes les 2s (avant : 20s => plancher de latence enorme sur petits scans)
             }
 
             StatusUpdate();
@@ -302,7 +352,7 @@ namespace SnaffCore
                             // Use the null character to match begin and end of line
                             string pattern = "(| |'|\")" + Regex.Escape(user) + "(| |'|\")";
                             Regex regex = new Regex(pattern,
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
+                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant, System.TimeSpan.FromSeconds(2));
                             configClassifierRule.Regexes.Add(regex);
                             Mq.Trace(String.Format("Adding regex {0} to rule {1}", regex, ruleName));
                         }

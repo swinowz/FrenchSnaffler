@@ -36,11 +36,16 @@ namespace SnaffCore.Config
         public int TimeOut { get; set; } = 5;
 
         // Concurrency Options
-        public int MaxThreads { get; set; } = 60;
+        public int MaxThreads { get; set; } = 0;  // 0 = use -x param value, no default limit
         public int ShareThreads { get; set; }
         public int TreeThreads { get; set; }
         public int FileThreads { get; set; }
-        public int MaxFileQueue { get; set; } = 200000;
+        public int MaxFileQueue { get; set; } = 50000;
+
+        public int MaxArchiveDepth { get; set; } = 3;
+        public int MaxArchiveEntries { get; set; } = 10000;
+        public long MaxArchiveEntryBytes { get; set; } = 50 * 1024 * 1024;
+        public long MaxArchiveTotalBytes { get; set; } = 500 * 1024 * 1024;
         public int MaxTreeQueue { get; set; } = 0;
         public int MaxShareQueue { get; set; } = 0;
 

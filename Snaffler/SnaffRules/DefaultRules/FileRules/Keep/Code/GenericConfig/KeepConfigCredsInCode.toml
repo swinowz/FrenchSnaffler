@@ -1,0 +1,41 @@
+# Credential patterns specifically for config files (.conf, .ini, .env, .cfg, .properties)
+# These extensions are common for storing credentials in key=value format
+
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "RelayConfigFilesForCreds"
+MatchAction = "Relay"
+RelayTargets = ["KeepConfigCredPatterns"]
+Description = "Config files relayed to credential pattern search"
+MatchLocation = "FileExtension"
+WordListType = "Exact"
+MatchLength = 0
+WordList = [
+    ".conf",
+    ".cfg",
+    ".ini",
+    ".env",
+    ".properties",
+    ".cnf",
+    ".config",
+    ".xml"
+]
+Triage = "Green"
+
+[[ClassifierRules]]
+EnumerationScope = "ContentsEnumeration"
+RuleName = "KeepConfigCredPatterns"
+MatchAction = "Snaffle"
+Description = "Config files with credential key=value patterns"
+MatchLocation = "FileContentAsString"
+WordListType = "Regex"
+MatchLength = 0
+WordList = [
+    "(?i)(ftp|sftp|ssh|smtp|db|mysql|postgres|mongo|redis|ldap|proxy)[_-]?(pass|pwd|password|passwd)\\s*[=:]\\s*\\S{2,}",
+    "(?i)(ftp|sftp|ssh|smtp|db|mysql|postgres|mongo|redis|ldap|proxy)[_-]?(user|login|username)\\s*[=:]\\s*\\S{2,}",
+    "(?i)(admin|root|service|app)[_-]?(pass|pwd|password)\\s*[=:]\\s*\\S{3,}",
+    "(?i)api[_-]?(key|token|secret)\\s*[=:]\\s*\\S{8,}",
+    "(?i)secret[_-]?key\\s*[=:]\\s*\\S{6,}",
+    "(?i)auth[_-]?(token|key|pass)\\s*[=:]\\s*\\S{4,}"
+]
+Triage = "Red"

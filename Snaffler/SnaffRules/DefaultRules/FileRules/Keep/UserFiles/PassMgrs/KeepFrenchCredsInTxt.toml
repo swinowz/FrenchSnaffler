@@ -1,0 +1,30 @@
+# French credential patterns - only for .txt files and Office documents
+# Looks for email+password combinations in French-labeled content
+
+[[ClassifierRules]]
+EnumerationScope = "FileEnumeration"
+RuleName = "RelayTxtForFrenchCreds"
+MatchAction = "Relay"
+RelayTargets = ["KeepFrenchCredsInTxt"]
+Description = "Text files relayed to French credential search"
+MatchLocation = "FileExtension"
+WordListType = "Exact"
+MatchLength = 0
+WordList = [
+    ".txt"
+]
+Triage = "Green"
+
+[[ClassifierRules]]
+EnumerationScope = "ContentsEnumeration"
+RuleName = "KeepFrenchCredsInTxt"
+MatchAction = "Snaffle"
+Description = "Text files with French credential patterns + email"
+MatchLocation = "FileContentAsString"
+WordListType = "Regex"
+MatchLength = 0
+WordList = [
+    "(?is)(mot.?de.?passe|mdp|password).{0,100}[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+    "(?is)[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}.{0,100}(mot.?de.?passe|mdp|password)"
+]
+Triage = "Red"

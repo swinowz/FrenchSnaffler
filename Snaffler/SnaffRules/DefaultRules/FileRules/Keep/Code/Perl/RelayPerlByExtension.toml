@@ -4,6 +4,11 @@ RuleName = "RelayPerlByExtension"
 MatchAction = "Relay"
 RelayTargets = ["KeepPerlDbConnStrings",
 "KeepAwsKeysInCode",
+"KeepGitHubToken",
+"KeepGoogleApiKey",
+"KeepAzureClientSecret",
+"KeepJwtToken",
+"KeepKubernetesConfig",
 "KeepInlinePrivateKey",
 "KeepPassOrKeyInCode",  "KeepSlackTokensInCode",
 "KeepSqlAccountCreation",

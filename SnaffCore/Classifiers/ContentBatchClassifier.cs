@@ -7,6 +7,8 @@ using static SnaffCore.Config.Options;
 
 #if ULTRASNAFFLER
 using Toxy;
+using Toxy.Parsers;
+using ClosedXML.Excel;
 #endif
 
 namespace SnaffCore.Classifiers
@@ -18,6 +20,30 @@ namespace SnaffCore.Classifiers
     public class ContentBatchClassifier
     {
         private BlockingMq Mq { get; set; } = BlockingMq.GetMq();
+
+#if ULTRASNAFFLER
+        // Statique (evite de reallouer une liste a CHAQUE fichier)
+        private static readonly System.Collections.Generic.HashSet<string> ParsedExtensions =
+            new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                ".doc",".docx",".xls",".xlsx",".eml",".msg",".pdf",".ppt",".pptx",
+                ".rtf",".docm",".xlsm",".pptm",".dot",".dotx",".dotm",".xlt",".xltm",
+                ".odt",".ods",".odp",".ott",".ots"
+            };
+
+        private static readonly System.Text.RegularExpressions.RegexOptions XmlRx =
+            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant;
+        private static readonly System.Text.RegularExpressions.Regex DocxSeparators =
+            new System.Text.RegularExpressions.Regex("</w:tc>|</w:tr>|</w:p>", XmlRx);
+        private static readonly System.Text.RegularExpressions.Regex OdfSeparators =
+            new System.Text.RegularExpressions.Regex("</table:table-cell>|<table:covered-table-cell/>|</table:table-row>|</text:p>|</text:h>|<text:tab/>|<text:line-break/>|<text:s/>|<text:s [^>]*/>", XmlRx);
+        private static readonly System.Text.RegularExpressions.Regex XmlTags =
+            new System.Text.RegularExpressions.Regex("<[^>]+>", XmlRx);
+        // Word parts that hold user text: body, headers/footers, notes and comments.
+        private static readonly System.Text.RegularExpressions.Regex DocxTextParts =
+            new System.Text.RegularExpressions.Regex(@"^word/(document|header\d*|footer\d*|footnotes|endnotes|comments)\.xml$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | XmlRx);
+#endif
 
         /// <summary>
         /// Reads file content once and applies all specified rules.
@@ -86,13 +112,7 @@ namespace SnaffCore.Classifiers
             {
 #if ULTRASNAFFLER
                 // Parse office documents and PDFs to text
-                List<string> parsedExtensions = new List<string>()
-                {
-                    ".doc",".docx",".xls",".xlsx",".eml",".msg",".pdf",".ppt",".pptx",
-                    ".rtf",".docm",".xlsm",".pptm",".dot",".dotx",".dotm",".xlt",".xlsm",".xltm"
-                };
-
-                if (parsedExtensions.Contains(fileInfo.Extension.ToLower()))
+                if (ParsedExtensions.Contains(fileInfo.Extension))
                 {
                     return ParseFileToString(fileInfo);
                 }
@@ -120,9 +140,7 @@ namespace SnaffCore.Classifiers
                     {
                         Mq.FileResult(fileResult);
                     }
-                    
-                    // Stop on first match to avoid duplicate findings
-                    return;
+                    // Continue checking other rules - don't return!
                 }
             }
         }
@@ -136,10 +154,18 @@ namespace SnaffCore.Classifiers
                 
                 if (textResult != null)
                 {
+                    if (DetectionFilters.IsKnownPlaceholder(rule, textResult))
+                    {
+                        Mq.Trace($"Suppressed known public placeholder for rule {rule.RuleName}: {textResult.MatchedValue}");
+                        continue;
+                    }
                     // Cap full content at 512KB for Excel export
-                    textResult.FullContent = fileString.Length > 512 * 1024 
-                        ? fileString.Substring(0, 512 * 1024) 
-                        : fileString;
+                    if (MyOptions.LogType == SnaffCore.Config.LogType.Auto)
+                    {
+                        textResult.FullContent = fileString.Length > 512 * 1024
+                            ? fileString.Substring(0, 512 * 1024)
+                            : fileString;
+                    }
                     
                     var fileResult = new FileResult(fileInfo)
                     {
@@ -151,9 +177,7 @@ namespace SnaffCore.Classifiers
                     {
                         Mq.FileResult(fileResult);
                     }
-                    
-                    // Stop on first match to avoid duplicate findings
-                    return;
+                    // Continue checking other rules - a file can match multiple credential patterns!
                 }
             }
         }
@@ -173,18 +197,31 @@ namespace SnaffCore.Classifiers
                     {
                         Mq.FileResult(fileResult);
                     }
-                    
-                    return;
+                    // Continue checking other rules - don't return!
                 }
             }
         }
 
         private bool ByteMatch(byte[] fileBytes, ClassifierRule rule)
         {
-            // Implementation from original ContentClassifier
-            // Check if byte pattern matches
-            // TODO: Copy from ContentClassifier.ByteMatch()
-            return false; // Placeholder
+            if (fileBytes == null || rule?.WordList == null) return false;
+            foreach (string pattern in rule.WordList)
+            {
+                byte[] needle = System.Text.Encoding.UTF8.GetBytes(pattern ?? "");
+                if (needle.Length == 0 || needle.Length > fileBytes.Length) continue;
+                for (int i = 0; i <= fileBytes.Length - needle.Length; i++)
+                {
+                    bool equal = true;
+                    for (int j = 0; j < needle.Length; j++)
+                        if (fileBytes[i + j] != needle[j]) { equal = false; break; }
+                    if (!equal) continue;
+                    if (rule.WordListType == MatchListType.Exact && fileBytes.Length != needle.Length) continue;
+                    if (rule.WordListType == MatchListType.StartsWith && i != 0) continue;
+                    if (rule.WordListType == MatchListType.EndsWith && i != fileBytes.Length - needle.Length) continue;
+                    return true;
+                }
+            }
+            return false;
         }
 
         private bool SizeMatch(FileInfo fileInfo, ClassifierRule rule)
@@ -197,19 +234,352 @@ namespace SnaffCore.Classifiers
 #if ULTRASNAFFLER
         private string ParseFileToString(FileInfo fileInfo)
         {
-            // Parse office documents using Toxy
-            // Implementation from original ContentClassifier
             try
             {
-                ParserContext context = new ParserContext(fileInfo.FullName);
-                IDocumentParser parser = ParserFactory.CreateDocument(context);
-                ToxyDocument document = parser.Parse();
-                return document.ToString();
+                string ext = fileInfo.Extension.ToLower();
+                
+                // Excel (xlsx/xlsm/xls/xlt...) : lecture STREAMING via ExcelDataReader
+                // (pas de DOM complet en memoire comme ClosedXML/Toxy -> gros gain RAM avec bcp de threads).
+                if (ext == ".xlsx" || ext == ".xlsm" || ext == ".xls" || ext == ".xlt" || ext == ".xltx" || ext == ".xltm")
+                {
+                    try
+                    {
+                        string result = ParseExcelStreamingWithRetry(fileInfo.FullName);
+                        if (!string.IsNullOrEmpty(result))
+                            return result;
+                    }
+                    catch (Exception ex)
+                    {
+                        string msg = ex.Message?.ToLower() ?? "";
+                        string exType = ex.GetType().Name.ToLower();
+                        if (msg.Contains("password") || msg.Contains("encrypted") || msg.Contains("encryption") ||
+                            exType.Contains("crypto"))
+                        {
+                            ReportPasswordProtectedFile(fileInfo);
+                            return "";
+                        }
+                        Mq.Trace($"Excel stream parse failed for {fileInfo.Name}: {ex.Message}");
+                    }
+                    // Fallback to text parser
+                    return ParseWithTextParser(fileInfo);
+                }
+                
+                // .docx / .docm / .dotx : extraction RAPIDE via OpenXML (lecture zip directe)
+                // au lieu de Toxy (DOM complet en memoire, lib non maintenue).
+                if (ext == ".docx" || ext == ".docm" || ext == ".dotx" || ext == ".dotm")
+                {
+                    try
+                    {
+                        string dresult = ParseDocxFast(fileInfo.FullName);
+                        if (!string.IsNullOrEmpty(dresult)) return dresult;
+                    }
+                    catch (Exception ex) { Mq.Trace($"DOCX fast parse failed for {fileInfo.Name}: {ex.Message}"); }
+                    return ParseWithTextParser(fileInfo); // repli sur Toxy
+                }
+
+                // OpenDocument (LibreOffice): zip + content.xml, no parser library needed.
+                if (ext == ".odt" || ext == ".ods" || ext == ".odp" || ext == ".ott" || ext == ".ots")
+                {
+                    try { return ParseOpenDocument(fileInfo); }
+                    catch (Exception ex) { Mq.Trace($"OpenDocument parse failed for {fileInfo.Name}: {ex.Message}"); return ""; }
+                }
+
+                // For all other documents, use text parser
+                return ParseWithTextParser(fileInfo);
             }
             catch
             {
-                return File.ReadAllText(fileInfo.FullName);
+                return "";
             }
+        }
+
+        // Extraction texte docx sans DOM : ouvre le zip, lit word/document.xml (+ headers/footers),
+        // preserve la structure des tableaux (cellule -> tab, ligne/paragraphe -> newline) puis retire les balises.
+        private string ParseDocxFast(string filePath)
+        {
+            var sb = new System.Text.StringBuilder();
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(filePath))
+            {
+                foreach (var entry in zip.Entries)
+                {
+                    if (!DocxTextParts.IsMatch(entry.FullName)) continue;
+                    using (var s = entry.Open())
+                    using (var r = new System.IO.StreamReader(s))
+                    {
+                        string xml = r.ReadToEnd();
+                        xml = DocxSeparators.Replace(xml, m => m.Value == "</w:tc>" ? "\t" : "\n");
+                        xml = XmlTags.Replace(xml, "");
+                        sb.Append(System.Net.WebUtility.HtmlDecode(xml));
+                        sb.Append('\n');
+                    }
+                }
+            }
+            return sb.ToString();
+        }
+        
+        // OpenDocument text extraction: content.xml (+ styles.xml for headers/footers).
+        // Cells -> tab, rows/paragraphs -> newline, matching the Office parsers so the
+        // credential-table extraction works the same way. Encrypted documents are reported.
+        private string ParseOpenDocument(FileInfo fileInfo)
+        {
+            var sb = new System.Text.StringBuilder();
+            using (var zip = System.IO.Compression.ZipFile.OpenRead(fileInfo.FullName))
+            {
+                var manifest = zip.GetEntry("META-INF/manifest.xml");
+                if (manifest != null)
+                {
+                    using (var r = new System.IO.StreamReader(manifest.Open()))
+                    {
+                        if (r.ReadToEnd().IndexOf("encryption-data", StringComparison.Ordinal) >= 0)
+                        {
+                            ReportPasswordProtectedFile(fileInfo);
+                            return "";
+                        }
+                    }
+                }
+                foreach (string part in new[] { "content.xml", "styles.xml" })
+                {
+                    var entry = zip.GetEntry(part);
+                    if (entry == null) continue;
+                    using (var r = new System.IO.StreamReader(entry.Open()))
+                    {
+                        string xml = r.ReadToEnd();
+                        xml = OdfSeparators.Replace(xml, m =>
+                            m.Value == "</table:table-cell>" || m.Value == "<table:covered-table-cell/>" || m.Value == "<text:tab/>" ? "\t"
+                            : m.Value.StartsWith("<text:s", StringComparison.Ordinal) ? " " : "\n");
+                        xml = XmlTags.Replace(xml, "");
+                        sb.Append(System.Net.WebUtility.HtmlDecode(xml));
+                        sb.Append('\n');
+                    }
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Report a password-protected file for manual investigation
+        /// </summary>
+        private void ReportPasswordProtectedFile(FileInfo fileInfo)
+        {
+            // Skip empty files - they're not password-protected, just empty/corrupt
+            if (fileInfo.Length == 0)
+            {
+                Mq.Trace($"Skipping empty file {fileInfo.Name} - not password-protected");
+                return;
+            }
+            
+            // Skip Office lock/owner files (start with ~$) - these are temp files, not real documents
+            if (fileInfo.Name.StartsWith("~$"))
+            {
+                Mq.Trace($"Skipping Office lock file {fileInfo.Name} - not password-protected");
+                return;
+            }
+            
+            var rule = new ClassifierRule
+            {
+                RuleName = "PasswordProtectedFile",
+                EnumerationScope = EnumerationScope.FileEnumeration,
+                MatchAction = MatchAction.Snaffle,
+                Triage = Triage.Yellow,
+                Description = "Password-protected document - may contain sensitive data"
+            };
+            
+            var textResult = new TextResult
+            {
+                MatchContext = "File is password-protected - requires manual investigation"
+            };
+            
+            var fileResult = new FileResult(fileInfo)
+            {
+                MatchedRule = rule,
+                TextResult = textResult
+            };
+            
+            Mq.FileResult(fileResult);
+        }
+        
+        // Small but highly compressed workbooks expand to many MB inside ExcelDataReader.
+        // With several workers on a small host this can throw OutOfMemoryException; the
+        // Toxy fallback then rejects the file as a zip bomb and its findings are lost
+        // (seen as run-to-run variation on Windows). Retry once, alone, after a GC.
+        private static readonly object ExcelRetryLock = new object();
+        private string ParseExcelStreamingWithRetry(string filePath)
+        {
+            try
+            {
+                return ParseExcelStreaming(filePath);
+            }
+            catch (OutOfMemoryException)
+            {
+                lock (ExcelRetryLock)
+                {
+                    Mq.Trace($"Excel parse ran out of memory, retrying alone: {filePath}");
+                    System.GC.Collect();
+                    return ParseExcelStreaming(filePath);
+                }
+            }
+        }
+
+        // Lecture Excel en STREAMING (xlsx ET xls) via ExcelDataReader : ligne par ligne, sans DOM complet.
+        // Sortie tab-delimited (identique a l'ancien parseur) pour l'extraction de creds.
+        private static bool _codePagesRegistered = false;
+        private string ParseExcelStreaming(string filePath)
+        {
+            if (!_codePagesRegistered)
+            {
+                System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+                _codePagesRegistered = true;
+            }
+            var sb = new System.Text.StringBuilder();
+            using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = ExcelDataReader.ExcelReaderFactory.CreateReader(stream))
+            {
+                do
+                {
+                    while (reader.Read())
+                    {
+                        for (int i = 0; i < reader.FieldCount; i++)
+                        {
+                            if (i > 0) sb.Append('\t');
+                            object v = reader.GetValue(i);
+                            if (v != null) sb.Append(v.ToString());
+                        }
+                        sb.Append('\n');
+                    }
+                } while (reader.NextResult());
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Parse .xlsx file using ClosedXML - fast and reliable
+        /// </summary>
+        private string ParseXlsxWithClosedXML(string filePath)
+        {
+            var sb = new System.Text.StringBuilder();
+            
+            try
+            {
+                using (var workbook = new XLWorkbook(filePath))
+                {
+                    foreach (var worksheet in workbook.Worksheets)
+                    {
+                        var usedRange = worksheet.RangeUsed();
+                        if (usedRange == null) continue;
+                        
+                        foreach (var row in usedRange.Rows())
+                        {
+                            var cells = row.Cells().Select(c => c.GetString() ?? "").ToArray();
+                            sb.AppendLine(string.Join("\t", cells));
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Only report as password-protected if error explicitly mentions encryption
+                string msg = ex.Message?.ToLower() ?? "";
+                string exType = ex.GetType().Name.ToLower();
+                if (msg.Contains("password") || msg.Contains("encrypted") || msg.Contains("encryption") ||
+                    msg.Contains("not a zip") || msg.Contains("invalid zip") ||
+                    exType.Contains("zip") || exType.Contains("crypto"))
+                {
+                    return "[PASSWORD_PROTECTED]";
+                }
+                // Other errors (corrupt, invalid, etc.) - just skip silently
+                Mq.Trace($"XLSX parse error for {filePath}: {ex.Message}");
+                return "";
+            }
+            
+            return sb.ToString();
+        }
+        
+        /// <summary>
+        /// Fallback text parser for non-Excel documents
+        /// </summary>
+        private string ParseWithTextParser(FileInfo fileInfo)
+        {
+            // REMOVED Task.Run to prevent thread pool starvation with large file queues
+            // Run synchronously - text parsing is fast enough (typically <100ms)
+            try
+            {
+                ParserContext context = new ParserContext(fileInfo.FullName);
+                ITextParser parser = ParserFactory.CreateText(context);
+                string result = parser.Parse() ?? "";
+                return result;
+            }
+            catch (Exception ex)
+            {
+                // Check if this is a password-protected file
+                string msg = ex.Message?.ToLower() ?? "";
+                string exType = ex.GetType().Name.ToLower();
+                if (msg.Contains("password") || msg.Contains("encrypted") || msg.Contains("encryption") ||
+                    msg.Contains("not a zip") || msg.Contains("invalid zip") ||
+                    exType.Contains("zip") || exType.Contains("crypto"))
+                {
+                    ReportPasswordProtectedFile(fileInfo);
+                }
+                Mq.Trace($"Text parse failed for {fileInfo.Name}: {ex.Message}");
+                return "";
+            }
+        }
+        
+        /// <summary>
+        /// Convert ToxySpreadsheet to tab-delimited string for credential extraction
+        /// </summary>
+        private string ConvertSpreadsheetToTabDelimited(ToxySpreadsheet spreadsheet)
+        {
+            if (spreadsheet == null || spreadsheet.Tables == null || spreadsheet.Tables.Count == 0)
+                return "";
+            
+            var sb = new System.Text.StringBuilder();
+            
+            foreach (var table in spreadsheet.Tables)
+            {
+                // Add header rows
+                if (table.HeaderRows != null)
+                {
+                    foreach (var headerRow in table.HeaderRows)
+                    {
+                        if (headerRow.Cells != null && headerRow.Cells.Count > 0)
+                        {
+                            var cellValues = new string[headerRow.LastCellIndex + 1];
+                            for (int i = 0; i <= headerRow.LastCellIndex; i++)
+                                cellValues[i] = "";
+                            
+                            foreach (var cell in headerRow.Cells)
+                            {
+                                if (cell.CellIndex >= 0 && cell.CellIndex < cellValues.Length)
+                                    cellValues[cell.CellIndex] = cell.Value ?? "";
+                            }
+                            sb.AppendLine(string.Join("\t", cellValues));
+                        }
+                    }
+                }
+                
+                // Add data rows
+                if (table.Rows != null)
+                {
+                    foreach (var row in table.Rows)
+                    {
+                        if (row.Cells != null && row.Cells.Count > 0)
+                        {
+                            var cellValues = new string[row.LastCellIndex + 1];
+                            for (int i = 0; i <= row.LastCellIndex; i++)
+                                cellValues[i] = "";
+                            
+                            foreach (var cell in row.Cells)
+                            {
+                                if (cell.CellIndex >= 0 && cell.CellIndex < cellValues.Length)
+                                    cellValues[cell.Value != null ? cell.CellIndex : cell.CellIndex] = cell.Value ?? "";
+                            }
+                            sb.AppendLine(string.Join("\t", cellValues));
+                        }
+                    }
+                }
+            }
+            
+            return sb.ToString();
         }
 #endif
     }

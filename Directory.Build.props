@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- NPOI 2.8+ ships its NuGet binaries under the OSMF EULA (OSMFEULA.txt in
+         the package): accepted by the repository owner. Applies to every project. -->
+    <AcceptNPOIOSMFLicense>true</AcceptNPOIOSMFLicense>
+  </PropertyGroup>
+</Project>

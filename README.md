@@ -33,6 +33,10 @@ Les ajouts de ce fork portent sur les points suivants ; ils s’ajoutent aux fon
 | **Qualité des résultats** | Déduplication par fichier et preuve détectée, filtrage de la clé AWS d’exemple publique, sorties JSON/texte corrigées. |
 | **Certificats** | Chargement via `X509CertificateLoader` et clés éphémères (aucune écriture dans le magasin de clés). Les PEM avec clé privée RSA, PKCS#8 ou chiffrée sont reconnus, ainsi que les clés PEM seules (`PrivateKeyWithoutCertificate`). |
 | **Archives** | Action `EnterArchive` (zip, 7z, rar, tar, gz, bz2, xz). Chaque membre garde son nom et ses dossiers, donc les règles par nom (`id_rsa`, `unattend.xml`, `web.config`) et par chemin (`\.ssh\`, `\.aws\`) s’appliquent aussi dans les archives. Le rapport indique `archive.zip!dossier\fichier`, y compris pour les archives imbriquées. Profondeur et tailles sont contrôlées pendant l’extraction ; les chemins `..` sont neutralisés. |
+| **Bibliothèque SCCM** | Dans `SCCMContentLib$`, les fichiers sont stockés sous leur hash (`FileLib`) ; ShareAuditor lit les `.INI` de `DataLib` et analyse chaque fichier sous son vrai nom (`unattend.xml`, scripts, clés). Le rapport indique le chemin `DataLib\<paquet>\...`, et `-m` collecte le fichier sous ce nom. |
+| **Reprise des longs scans** | `--checkpoint <fichier>` mémorise les dossiers et machines terminés ; relancer la même commande reprend là où le scan s’est arrêté, sans écraser le premier rapport. |
+| **Autre compte réseau** | `--username DOMAINE\compte` : les accès SMB et LDAP utilisent ce compte, comme `runas /netonly`, y compris depuis une machine hors domaine. Sans `--password`, le mot de passe est demandé sans écho. |
+| **Règles supplémentaires** | Disques de VM (`.vmdk`, `.vhdx`…), `set "MOT_DE_PASSE=…"` / `set mdp=…` dans les scripts batch (variables `%x%`/`!x!` ignorées), clés PuTTY : Black sans phrase de passe, Red si chiffrée. |
 | **Socle actuel** | Cible Windows x64 sous .NET 10, Server GC, GC concurrent et Tiered PGO. |
 
 Ces changements visent à réduire le coût des scans et à faciliter le traitement des résultats. Aucun gain chiffré universel n’est annoncé : le débit dépend du réseau, des documents, des règles et des ressources disponibles. L’export Excel conserve le classeur en mémoire ; ce n’est pas une sortie à mémoire constante.
@@ -73,6 +77,8 @@ Les dossiers de sortie doivent exister. Avec `-t auto -o "C:\Audit\rapport.log"`
 | `-k <fichier>` | Liste de machines à exclure. |
 | `-a` | Découvrir les partages sans parcourir leurs fichiers. |
 | `-f` | Limiter la découverte de partages à DFS. |
+| `--username <compte>` | Accéder au réseau avec un autre compte (`DOMAINE\compte` ou `compte@domaine`), comme `runas /netonly`. |
+| `--password <mdp>` | Mot de passe de `--username` ; s’il est omis, il est demandé sans écho, ce qui évite l’historique et la liste des processus. |
 
 ### Sortie et collecte
 
@@ -101,6 +107,7 @@ Les dossiers de sortie doivent exister. Avec `-t auto -o "C:\Audit\rapport.log"`
 | `-z <fichier>` | Charger une configuration TOML. Elle remplace l’objet de configuration construit à partir des options CLI ; éviter de mélanger les deux pour surcharger des valeurs. |
 | `-z generate` | Générer `default.toml` à partir de la configuration courante. |
 | `-e <minutes>` | Régler l’intervalle de statut et le délai de collecte LDAP ; ce n’est pas une limite globale de durée du scan. |
+| `--checkpoint <fichier>` | Reprise d’un scan interrompu : relancer exactement la même commande. Les dossiers à moitié traités sont rescannés ; les résultats de la reprise vont dans `<sortie>-resume-N`. |
 | `-w <fichier>` | Diagnostic de l’extraction d’identifiants sur un fichier. Pour les classeurs, ce diagnostic lit les données brutes et ne remplace pas un scan bureautique complet. |
 
 Certains textes de l’aide intégrée sont encore historiques, notamment la limite de contenu annoncée à 500 Ko et la liste des formats de sortie. Les valeurs ci-dessus correspondent au code actuel.
